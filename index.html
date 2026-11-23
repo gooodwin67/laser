@@ -2,108 +2,273 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Laser Camera Test</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101722">
+<title>Laser Lab 2.0</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#101722;color:#fff;font:15px system-ui,sans-serif}header,section{padding:12px 16px}h2{margin:0;font-size:19px}#cameraArea{position:relative;width:100%;background:#000;overflow:hidden}video{display:block;width:100%;height:auto;max-height:65vh;object-fit:contain}canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}button{background:#2587ee;border:0;border-radius:9px;padding:12px 15px;color:white;font-size:16px;margin:2px}button:disabled{opacity:.5}label{display:block;margin:12px 0}input{width:100%}.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}.stats div{background:#1e293b;border-radius:10px;padding:10px}.stats b{display:block;font-size:23px}#status{color:#9cb3c6}small{color:#9cb3c6}
+*{box-sizing:border-box}body{margin:0;background:#101722;color:#f6f8fc;font:15px system-ui,Arial,sans-serif}
+header,main{padding:14px}h1{font-size:20px;margin:0 0 5px}h2{font-size:16px;margin:18px 0 8px}small,.hint{color:#9db0c6}
+#cameraArea{width:100%;position:relative;background:#020408;overflow:hidden;min-height:170px}
+video{display:block;width:100%;height:auto;max-height:65vh;object-fit:contain}
+#overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+button,select{background:#24384e;color:white;border:1px solid #456078;border-radius:9px;padding:10px 12px;font-size:15px}
+button.primary{background:#1676d8;border-color:#1676d8}button{margin:0 4px 6px 0}
+.controls{display:flex;flex-wrap:wrap;gap:5px}.controls button{flex:1}
+label{display:block;margin:12px 0 7px}label.inline{display:flex;gap:8px;align-items:center}
+input[type=range]{width:100%;accent-color:#4aafff}select{width:100%;margin-top:5px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}.stat{background:#1e2c40;border-radius:9px;padding:10px;min-width:0}
+.stat b{display:block;font-size:20px;margin-top:3px;overflow-wrap:anywhere}
+#status{margin:9px 0;color:#a8cae9;min-height:20px}
+hr{border:0;border-top:1px solid #2c3d50;margin:17px 0}
+#exposureControls{display:none}#exposureControls.visible{display:block}
 </style>
 </head>
 <body>
-<header><h2>Laser Camera Test</h2><small>Тест обнаружения красного лазерного пятна на Android</small></header>
+<header><h1>Laser Lab 2.0</h1><small>Эксперимент: Android-камера и лазерная указка</small></header>
 <div id="cameraArea"><video id="video" playsinline muted autoplay></video><canvas id="overlay"></canvas></div>
-<section>
-<button id="start">Включить камеру</button><button id="switch">Сменить камеру</button><button id="reset">Сбросить счёт</button>
+<main>
+<div class="controls">
+<button class="primary" id="startButton">Включить камеру</button>
+<button id="switchButton">Сменить камеру</button>
+<button id="resetButton">Сбросить счёт</button>
+</div>
 <p id="status">Камера выключена</p>
-<div class="stats"><div>Координаты<b id="coordinates">—</b></div><div>Появления<b id="count">0</b></div><div>FPS<b id="fps">0</b></div><div>Яркость точки<b id="brightness">—</b></div></div>
-<label>Порог яркости: <span id="thresholdValue">150</span><input id="threshold" type="range" min="60" max="250" value="150"></label>
-<label>Преобладание красного: <span id="redValue">50</span><input id="redDifference" type="range" min="10" max="140" value="50"></label>
-<small>Для доступа к камере открывайте страницу по HTTPS. Красные объекты могут давать ложные срабатывания. Не направляйте лазер в глаза или объектив камеры.</small>
-</section>
+<div class="stats">
+<div class="stat">Точка<b id="coordinates">—</b></div>
+<div class="stat">Появления<b id="count">0</b></div>
+<div class="stat">FPS обработки<b id="fps">0</b></div>
+<div class="stat">Размер пятна<b id="spotSize">—</b></div>
+</div>
+<h2>Детектор</h2>
+<label>Режим
+<select id="mode">
+<option value="red">Красный цвет</option>
+<option value="bright">Яркая точка (под фильтр)</option>
+<option value="difference">Изменение между кадрами</option>
+</select></label>
+<label>Ширина обработки
+<select id="resolution"><option value="320">320 пикселей (быстро)</option><option value="640" selected>640 пикселей</option><option value="960">960 пикселей</option><option value="1280">1280 пикселей (медленно)</option></select></label>
+<label class="inline"><input id="processedPreview" type="checkbox"> Показывать обработанное изображение</label>
+<label>Минимальная яркость: <b id="brightnessValue">190</b><input type="range" min="20" max="255" value="190" id="brightness"></label>
+<label>Преобладание красного: <b id="redValue">45</b><input type="range" min="0" max="160" value="45" id="redDifference"></label>
+<label>Разница между кадрами: <b id="changeValue">55</b><input type="range" min="10" max="200" value="55" id="changeThreshold"></label>
+<label>Минимальный размер пятна (пикс.): <b id="minimumSizeValue">1</b><input type="range" min="1" max="40" value="1" id="minimumSize"></label>
+<p class="hint">«Красный цвет» — без фильтра. «Яркая точка» — при сильно затемнённом изображении. «Изменение» — при неподвижном телефоне и кратком включении указки. Никакой из режимов не гарантирует распознавания на пересвеченном фоне.</p>
+<hr>
+<h2>Настройки камеры</h2>
+<p id="exposureStatus" class="hint">После включения проверим поддержку ручной экспозиции.</p>
+<div id="exposureControls">
+<button id="autoExposure">Автоэкспозиция</button>
+<button id="manualExposure">Ручная экспозиция</button>
+<label>Выдержка: <b id="exposureValue">—</b><input id="exposureTime" type="range"></label>
+</div>
+<p class="hint">В браузере Android ручная экспозиция часто недоступна. Программный порог не заменяет физическое уменьшение выдержки или оптический фильтр.</p>
+<hr>
+<small>Тест на неподвижной матовой поверхности. Не направляйте лазер на людей, глаза, зеркала или непосредственно в объектив камеры. Для работы камеры откройте страницу через HTTPS.</small>
+</main>
 <script>
+'use strict';
 const video=document.getElementById('video');
 const overlay=document.getElementById('overlay');
 const overlayContext=overlay.getContext('2d');
 const sampleCanvas=document.createElement('canvas');
 const sampleContext=sampleCanvas.getContext('2d',{willReadFrequently:true});
-const statusElement=document.getElementById('status');
-const coordinatesElement=document.getElementById('coordinates');
-const countElement=document.getElementById('count');
-const fpsElement=document.getElementById('fps');
-const brightnessElement=document.getElementById('brightness');
-const thresholdInput=document.getElementById('threshold');
-const redDifferenceInput=document.getElementById('redDifference');
-const startButton=document.getElementById('start');
-let stream=null;
-let facingMode='environment';
+const maskCanvas=document.createElement('canvas');
+const maskContext=maskCanvas.getContext('2d');
+const element=name=>document.getElementById(name);
+let cameraStream=null;
+let cameraTrack=null;
+let cameraFacing='environment';
+let sessionNumber=0;
 let lastFrameTime=0;
 let lastDetectedTime=0;
-let isTracking=false;
-let shotCount=0;
-let loopEnabled=false;
-let runningVersion=0;
-const scanWidth=320;
-thresholdInput.addEventListener('input',()=>document.getElementById('thresholdValue').textContent=thresholdInput.value);
-redDifferenceInput.addEventListener('input',()=>document.getElementById('redValue').textContent=redDifferenceInput.value);
-document.getElementById('reset').addEventListener('click',()=>{shotCount=0;countElement.textContent='0';});
-startButton.addEventListener('click',()=>startCamera());
-document.getElementById('switch').addEventListener('click',()=>{facingMode=facingMode==='environment'?'user':'environment';startCamera();});
-async function startCamera(){
-runningVersion++;loopEnabled=false;
-if(stream){stream.getTracks().forEach(track=>track.stop());stream=null;}
-try{
-statusElement.textContent='Запрашиваю доступ к камере…';
-stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:facingMode},width:{ideal:1280},height:{ideal:720}}});
-video.srcObject=stream;
-await video.play();
-const version=runningVersion;
-loopEnabled=true;lastFrameTime=performance.now();
-statusElement.textContent='Камера работает. Координаты учитывают поля видео.';
-requestAnimationFrame(time=>processFrame(time,version));
-}catch(error){statusElement.textContent='Ошибка камеры: '+error.message;}
+let wasDetected=false;
+let detections=0;
+let previousPixels=null;
+let scanMask=null;
+let visited=null;
+let queue=null;
+let exposureCapabilities=null;
+let exposureSupported=false;
+function connectRange(inputName,valueName){
+const input=element(inputName);
+input.addEventListener('input',()=>element(valueName).textContent=input.value);
 }
-function processFrame(now,version){
-if(!loopEnabled||version!==runningVersion)return;
-requestAnimationFrame(time=>processFrame(time,version));
-if(video.readyState<2||now-lastFrameTime<30)return;
-const elapsed=now-lastFrameTime;lastFrameTime=now;
-fpsElement.textContent=Math.round(1000/elapsed);
-const width=scanWidth;
-const height=Math.max(1,Math.round(scanWidth*video.videoHeight/video.videoWidth));
-if(sampleCanvas.width!==width||sampleCanvas.height!==height){sampleCanvas.width=width;sampleCanvas.height=height;}
+connectRange('brightness','brightnessValue');
+connectRange('redDifference','redValue');
+connectRange('changeThreshold','changeValue');
+connectRange('minimumSize','minimumSizeValue');
+element('resetButton').onclick=()=>{detections=0;element('count').textContent='0'};
+element('startButton').onclick=()=>startCamera();
+element('switchButton').onclick=()=>{cameraFacing=cameraFacing==='environment'?'user':'environment';startCamera()};
+element('resolution').onchange=()=>{previousPixels=null;scanMask=null;visited=null;queue=null};
+element('mode').onchange=()=>{previousPixels=null};
+async function startCamera(){
+const thisSession=++sessionNumber;
+if(cameraStream)cameraStream.getTracks().forEach(track=>track.stop());
+cameraStream=null;cameraTrack=null;previousPixels=null;wasDetected=false;
+element('status').textContent='Запрашиваю камеру…';
+element('exposureControls').classList.remove('visible');
+try{
+if(!navigator.mediaDevices?.getUserMedia)throw new Error('Нужен HTTPS и браузер с поддержкой камеры');
+const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:cameraFacing},width:{ideal:1920},height:{ideal:1080}}});
+if(thisSession!==sessionNumber){stream.getTracks().forEach(track=>track.stop());return;}
+cameraStream=stream;cameraTrack=stream.getVideoTracks()[0];
+video.srcObject=stream;await video.play();
+element('status').textContent='Камера работает: '+video.videoWidth+'×'+video.videoHeight;
+lastFrameTime=performance.now();
+inspectExposure();
+requestAnimationFrame(time=>processFrame(time,thisSession));
+}catch(error){element('status').textContent='Ошибка: '+error.message;}
+}
+async function inspectExposure(){
+try{
+exposureCapabilities=cameraTrack?.getCapabilities?.();
+const options=exposureCapabilities?.exposureMode;
+exposureSupported=!!(options?.includes('manual')&&exposureCapabilities?.exposureTime);
+if(!exposureSupported){
+element('exposureStatus').textContent='Ручная экспозиция недоступна через браузер/камеру.';
+return;
+}
+const limits=exposureCapabilities.exposureTime;
+const slider=element('exposureTime');
+slider.min=String(limits.min);slider.max=String(limits.max);
+slider.step=String(limits.step||Math.max((limits.max-limits.min)/500,0.00001));
+slider.value=String(cameraTrack.getSettings?.().exposureTime??limits.min);
+element('exposureValue').textContent=slider.value;
+element('exposureStatus').textContent='Ручная выдержка поддерживается. Уменьшайте её, пока фон не потемнеет.';
+element('exposureControls').classList.add('visible');
+}catch(error){element('exposureStatus').textContent='Не удалось прочитать настройки: '+error.message;}
+}
+async function setExposure(mode){
+if(!cameraTrack||!exposureSupported)return;
+try{
+await cameraTrack.applyConstraints({advanced:[{exposureMode:mode}]});
+if(mode==='manual')await setExposureTime();
+element('exposureStatus').textContent='Экспозиция: '+mode;
+}catch(error){element('exposureStatus').textContent='Камера отклонила настройку: '+error.message;}
+}
+async function setExposureTime(){
+if(!cameraTrack||!exposureSupported)return;
+const value=Number(element('exposureTime').value);
+element('exposureValue').textContent=String(value);
+try{await cameraTrack.applyConstraints({advanced:[{exposureMode:'manual',exposureTime:value}]});}
+catch(error){element('exposureStatus').textContent='Не удалось выставить выдержку: '+error.message;}
+}
+element('autoExposure').onclick=()=>setExposure('continuous');
+element('manualExposure').onclick=()=>setExposure('manual');
+element('exposureTime').onchange=()=>setExposureTime();
+function processFrame(now,thisSession){
+if(thisSession!==sessionNumber||!cameraStream)return;
+requestAnimationFrame(time=>processFrame(time,thisSession));
+if(video.readyState<2||now-lastFrameTime<40)return;
+const frameTime=now-lastFrameTime;lastFrameTime=now;
+element('fps').textContent=String(Math.round(1000/frameTime));
+const width=Number(element('resolution').value);
+const height=Math.max(1,Math.round(width*video.videoHeight/video.videoWidth));
+if(sampleCanvas.width!==width||sampleCanvas.height!==height){
+sampleCanvas.width=width;sampleCanvas.height=height;
+maskCanvas.width=width;maskCanvas.height=height;
+scanMask=new Uint8Array(width*height);
+visited=new Uint8Array(width*height);
+queue=new Int32Array(width*height);
+previousPixels=null;
+}
 sampleContext.drawImage(video,0,0,width,height);
 const pixels=sampleContext.getImageData(0,0,width,height).data;
-const minimumRed=Number(thresholdInput.value);
-const minimumDifference=Number(redDifferenceInput.value);
-let bestScore=-1,bestX=0,bestY=0,bestRed=0;
-for(let pixelIndex=0;pixelIndex<pixels.length;pixelIndex+=4){
-const red=pixels[pixelIndex],green=pixels[pixelIndex+1],blue=pixels[pixelIndex+2];
-const difference=red-Math.max(green,blue);
-if(red<minimumRed||difference<minimumDifference)continue;
-const score=red+difference*2;
-if(score>bestScore){bestScore=score;bestX=(pixelIndex/4)%width;bestY=Math.floor((pixelIndex/4)/width);bestRed=red;}
+const brightnessThreshold=Number(element('brightness').value);
+const redThreshold=Number(element('redDifference').value);
+const changeThreshold=Number(element('changeThreshold').value);
+const minimumSize=Number(element('minimumSize').value);
+const mode=element('mode').value;
+const pixelCount=width*height;
+scanMask.fill(0);
+visited.fill(0);
+let currentImage=element('processedPreview').checked?maskContext.createImageData(width,height):null;
+for(let pixel=0;pixel<pixelCount;pixel++){
+const offset=pixel*4;
+const red=pixels[offset],green=pixels[offset+1],blue=pixels[offset+2];
+const peak=Math.max(red,green,blue);
+let active=false;
+if(mode==='red')active=red>=brightnessThreshold&&red-Math.max(green,blue)>=redThreshold;
+else if(mode==='bright')active=peak>=brightnessThreshold;
+else if(previousPixels){
+const oldPeak=Math.max(previousPixels[offset],previousPixels[offset+1],previousPixels[offset+2]);
+active=peak>=brightnessThreshold&&peak-oldPeak>=changeThreshold;
 }
-const frameWidth=video.clientWidth,frameHeight=video.clientHeight;
-overlay.width=Math.round(frameWidth*devicePixelRatio);overlay.height=Math.round(frameHeight*devicePixelRatio);
-overlayContext.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+if(active)scanMask[pixel]=1;
+if(currentImage){
+const value=active?255:0;
+currentImage.data[offset]=value;
+currentImage.data[offset+1]=value;
+currentImage.data[offset+2]=value;
+currentImage.data[offset+3]=255;
+}
+}
+previousPixels=new Uint8ClampedArray(pixels);
+let bestComponent=null;
+const maximumSize=Math.max(50,Math.floor(pixelCount*0.025));
+for(let initial=0;initial<pixelCount;initial++){
+if(!scanMask[initial]||visited[initial])continue;
+let head=0,tail=1;
+queue[0]=initial;visited[initial]=1;
+let weightSum=0,sumX=0,sumY=0,redMax=0;
+while(head<tail){
+const index=queue[head++];
+const x=index%width;
+const y=(index-x)/width;
+const offset=index*4;
+const strength=Math.max(pixels[offset],pixels[offset+1],pixels[offset+2]);
+weightSum+=strength;sumX+=x*strength;sumY+=y*strength;
+redMax=Math.max(redMax,pixels[offset]);
+if(x>0){const next=index-1;if(scanMask[next]&&!visited[next]){visited[next]=1;queue[tail++]=next;}}
+if(x<width-1){const next=index+1;if(scanMask[next]&&!visited[next]){visited[next]=1;queue[tail++]=next;}}
+if(y>0){const next=index-width;if(scanMask[next]&&!visited[next]){visited[next]=1;queue[tail++]=next;}}
+if(y<height-1){const next=index+width;if(scanMask[next]&&!visited[next]){visited[next]=1;queue[tail++]=next;}}
+}
+if(tail<minimumSize||tail>maximumSize)continue;
+const score=weightSum*Math.sqrt(tail);
+if(!bestComponent||score>bestComponent.score){
+bestComponent={x:sumX/weightSum,y:sumY/weightSum,size:tail,score,redMax};
+}
+}
+const frameWidth=video.clientWidth;
+const frameHeight=video.clientHeight;
+const ratio=window.devicePixelRatio||1;
+overlay.width=Math.round(frameWidth*ratio);
+overlay.height=Math.round(frameHeight*ratio);
+overlayContext.setTransform(ratio,0,0,ratio,0,0);
 overlayContext.clearRect(0,0,frameWidth,frameHeight);
-if(bestScore>=0){
-const videoAspectRatio=video.videoWidth/video.videoHeight;
-const boxAspectRatio=frameWidth/frameHeight;
-const displayedWidth=boxAspectRatio>videoAspectRatio?frameHeight*videoAspectRatio:frameWidth;
-const displayedHeight=boxAspectRatio>videoAspectRatio?frameHeight:frameWidth/videoAspectRatio;
-const horizontalOffset=(frameWidth-displayedWidth)/2;
-const verticalOffset=(frameHeight-displayedHeight)/2;
-const pointX=horizontalOffset+(bestX+0.5)/width*displayedWidth;
-const pointY=verticalOffset+(bestY+0.5)/height*displayedHeight;
-overlayContext.beginPath();overlayContext.arc(pointX,pointY,18,0,Math.PI*2);overlayContext.strokeStyle='#37ff76';overlayContext.lineWidth=3;overlayContext.stroke();
-overlayContext.beginPath();overlayContext.moveTo(pointX-28,pointY);overlayContext.lineTo(pointX+28,pointY);overlayContext.moveTo(pointX,pointY-28);overlayContext.lineTo(pointX,pointY+28);overlayContext.stroke();
-coordinatesElement.textContent=(bestX/width*100).toFixed(1)+'% / '+(bestY/height*100).toFixed(1)+'%';
-brightnessElement.textContent=String(bestRed);
-if(!isTracking&&now-lastDetectedTime>250){shotCount++;countElement.textContent=String(shotCount);}
-isTracking=true;lastDetectedTime=now;
+const videoRatio=video.videoWidth/video.videoHeight;
+const frameRatio=frameWidth/frameHeight;
+const displayedWidth=frameRatio>videoRatio?frameHeight*videoRatio:frameWidth;
+const displayedHeight=frameRatio>videoRatio?frameHeight:frameWidth/videoRatio;
+const left=(frameWidth-displayedWidth)/2;
+const top=(frameHeight-displayedHeight)/2;
+if(currentImage){
+maskContext.putImageData(currentImage,0,0);
+overlayContext.fillStyle='#000';
+overlayContext.fillRect(0,0,frameWidth,frameHeight);
+overlayContext.drawImage(maskCanvas,left,top,displayedWidth,displayedHeight);
+}
+if(bestComponent){
+const pointX=left+(bestComponent.x+0.5)/width*displayedWidth;
+const pointY=top+(bestComponent.y+0.5)/height*displayedHeight;
+overlayContext.strokeStyle='#21ff83';
+overlayContext.lineWidth=2.5;
+overlayContext.beginPath();overlayContext.arc(pointX,pointY,16,0,Math.PI*2);overlayContext.stroke();
+overlayContext.beginPath();
+overlayContext.moveTo(pointX-25,pointY);overlayContext.lineTo(pointX+25,pointY);
+overlayContext.moveTo(pointX,pointY-25);overlayContext.lineTo(pointX,pointY+25);
+overlayContext.stroke();
+element('coordinates').textContent=(100*(bestComponent.x+0.5)/width).toFixed(1)+'% / '+(100*(bestComponent.y+0.5)/height).toFixed(1)+'%';
+element('spotSize').textContent=bestComponent.size+' px';
+if(!wasDetected&&now-lastDetectedTime>220){detections++;element('count').textContent=String(detections);}
+wasDetected=true;lastDetectedTime=now;
 }else{
-coordinatesElement.textContent='—';brightnessElement.textContent='—';
-if(now-lastDetectedTime>160)isTracking=false;
+element('coordinates').textContent='—';
+element('spotSize').textContent='—';
+if(now-lastDetectedTime>130)wasDetected=false;
 }
 }
 </script>

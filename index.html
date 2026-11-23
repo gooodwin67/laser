@@ -57,7 +57,7 @@ video.srcObject=stream;
 await video.play();
 const version=runningVersion;
 loopEnabled=true;lastFrameTime=performance.now();
-statusElement.textContent='Камера работает. Ищите лазерную точку.';
+statusElement.textContent='Камера работает. Координаты учитывают поля видео.';
 requestAnimationFrame(time=>processFrame(time,version));
 }catch(error){statusElement.textContent='Ошибка камеры: '+error.message;}
 }
@@ -87,8 +87,14 @@ overlay.width=Math.round(frameWidth*devicePixelRatio);overlay.height=Math.round(
 overlayContext.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
 overlayContext.clearRect(0,0,frameWidth,frameHeight);
 if(bestScore>=0){
-const pointX=bestX/width*frameWidth;
-const pointY=bestY/height*frameHeight;
+const videoAspectRatio=video.videoWidth/video.videoHeight;
+const boxAspectRatio=frameWidth/frameHeight;
+const displayedWidth=boxAspectRatio>videoAspectRatio?frameHeight*videoAspectRatio:frameWidth;
+const displayedHeight=boxAspectRatio>videoAspectRatio?frameHeight:frameWidth/videoAspectRatio;
+const horizontalOffset=(frameWidth-displayedWidth)/2;
+const verticalOffset=(frameHeight-displayedHeight)/2;
+const pointX=horizontalOffset+(bestX+0.5)/width*displayedWidth;
+const pointY=verticalOffset+(bestY+0.5)/height*displayedHeight;
 overlayContext.beginPath();overlayContext.arc(pointX,pointY,18,0,Math.PI*2);overlayContext.strokeStyle='#37ff76';overlayContext.lineWidth=3;overlayContext.stroke();
 overlayContext.beginPath();overlayContext.moveTo(pointX-28,pointY);overlayContext.lineTo(pointX+28,pointY);overlayContext.moveTo(pointX,pointY-28);overlayContext.lineTo(pointX,pointY+28);overlayContext.stroke();
 coordinatesElement.textContent=(bestX/width*100).toFixed(1)+'% / '+(bestY/height*100).toFixed(1)+'%';

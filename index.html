@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Laser Camera Test</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101722;color:#fff;font:15px system-ui,sans-serif}header,section{padding:12px 16px}h2{margin:0;font-size:19px}#cameraArea{position:relative;width:100%;background:#000;overflow:hidden}video{display:block;width:100%;height:auto;max-height:65vh;object-fit:contain}canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}button{background:#2587ee;border:0;border-radius:9px;padding:12px 15px;color:white;font-size:16px;margin:2px}button:disabled{opacity:.5}label{display:block;margin:12px 0}input{width:100%}.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}.stats div{background:#1e293b;border-radius:10px;padding:10px}.stats b{display:block;font-size:23px}#status{color:#9cb3c6}small{color:#9cb3c6}
+</style>
+</head>
+<body>
+<header><h2>Laser Camera Test</h2><small>Тест обнаружения красного лазерного пятна на Android</small></header>
+<div id="cameraArea"><video id="video" playsinline muted autoplay></video><canvas id="overlay"></canvas></div>
+<section>
+<button id="start">Включить камеру</button><button id="switch">Сменить камеру</button><button id="reset">Сбросить счёт</button>
+<p id="status">Камера выключена</p>
+<div class="stats"><div>Координаты<b id="coordinates">—</b></div><div>Появления<b id="count">0</b></div><div>FPS<b id="fps">0</b></div><div>Яркость точки<b id="brightness">—</b></div></div>
+<label>Порог яркости: <span id="thresholdValue">150</span><input id="threshold" type="range" min="60" max="250" value="150"></label>
+<label>Преобладание красного: <span id="redValue">50</span><input id="redDifference" type="range" min="10" max="140" value="50"></label>
+<small>Для доступа к камере открывайте страницу по HTTPS. Красные объекты могут давать ложные срабатывания. Не направляйте лазер в глаза или объектив камеры.</small>
+</section>
+<script>
+const video=document.getElementById('video');
+const overlay=document.getElementById('overlay');
+const overlayContext=overlay.getContext('2d');
+const sampleCanvas=document.createElement('canvas');
+const sampleContext=sampleCanvas.getContext('2d',{willReadFrequently:true});
+const statusElement=document.getElementById('status');
+const coordinatesElement=document.getElementById('coordinates');
+const countElement=document.getElementById('count');
+const fpsElement=document.getElementById('fps');
+const brightnessElement=document.getElementById('brightness');
+const thresholdInput=document.getElementById('threshold');
+const redDifferenceInput=document.getElementById('redDifference');
+const startButton=document.getElementById('start');
+let stream=null;
+let facingMode='environment';
+let lastFrameTime=0;
+let lastDetectedTime=0;
+let isTracking=false;
+let shotCount=0;
+let loopEnabled=false;
+let runningVersion=0;
+const scanWidth=320;
+thresholdInput.addEventListener('input',()=>document.getElementById('thresholdValue').textContent=thresholdInput.value);
+redDifferenceInput.addEventListener('input',()=>document.getElementById('redValue').textContent=redDifferenceInput.value);
+document.getElementById('reset').addEventListener('click',()=>{shotCount=0;countElement.textContent='0';});
+startButton.addEventListener('click',()=>startCamera());
+document.getElementById('switch').addEventListener('click',()=>{facingMode=facingMode==='environment'?'user':'environment';startCamera();});
+async function startCamera(){
+runningVersion++;loopEnabled=false;
+if(stream){stream.getTracks().forEach(track=>track.stop());stream=null;}
+try{
+statusElement.textContent='Запрашиваю доступ к камере…';
+stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:facingMode},width:{ideal:1280},height:{ideal:720}}});
+video.srcObject=stream;
+await video.play();
+const version=runningVersion;
+loopEnabled=true;lastFrameTime=performance.now();
+statusElement.textContent='Камера работает. Ищите лазерную точку.';
+requestAnimationFrame(time=>processFrame(time,version));
+}catch(error){statusElement.textContent='Ошибка камеры: '+error.message;}
+}
+function processFrame(now,version){
+if(!loopEnabled||version!==runningVersion)return;
+requestAnimationFrame(time=>processFrame(time,version));
+if(video.readyState<2||now-lastFrameTime<30)return;
+const elapsed=now-lastFrameTime;lastFrameTime=now;
+fpsElement.textContent=Math.round(1000/elapsed);
+const width=scanWidth;
+const height=Math.max(1,Math.round(scanWidth*video.videoHeight/video.videoWidth));
+if(sampleCanvas.width!==width||sampleCanvas.height!==height){sampleCanvas.width=width;sampleCanvas.height=height;}
+sampleContext.drawImage(video,0,0,width,height);
+const pixels=sampleContext.getImageData(0,0,width,height).data;
+const minimumRed=Number(thresholdInput.value);
+const minimumDifference=Number(redDifferenceInput.value);
+let bestScore=-1,bestX=0,bestY=0,bestRed=0;
+for(let pixelIndex=0;pixelIndex<pixels.length;pixelIndex+=4){
+const red=pixels[pixelIndex],green=pixels[pixelIndex+1],blue=pixels[pixelIndex+2];
+const difference=red-Math.max(green,blue);
+if(red<minimumRed||difference<minimumDifference)continue;
+const score=red+difference*2;
+if(score>bestScore){bestScore=score;bestX=(pixelIndex/4)%width;bestY=Math.floor((pixelIndex/4)/width);bestRed=red;}
+}
+const frameWidth=video.clientWidth,frameHeight=video.clientHeight;
+overlay.width=Math.round(frameWidth*devicePixelRatio);overlay.height=Math.round(frameHeight*devicePixelRatio);
+overlayContext.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+overlayContext.clearRect(0,0,frameWidth,frameHeight);
+if(bestScore>=0){
+const pointX=bestX/width*frameWidth;
+const pointY=bestY/height*frameHeight;
+overlayContext.beginPath();overlayContext.arc(pointX,pointY,18,0,Math.PI*2);overlayContext.strokeStyle='#37ff76';overlayContext.lineWidth=3;overlayContext.stroke();
+overlayContext.beginPath();overlayContext.moveTo(pointX-28,pointY);overlayContext.lineTo(pointX+28,pointY);overlayContext.moveTo(pointX,pointY-28);overlayContext.lineTo(pointX,pointY+28);overlayContext.stroke();
+coordinatesElement.textContent=(bestX/width*100).toFixed(1)+'% / '+(bestY/height*100).toFixed(1)+'%';
+brightnessElement.textContent=String(bestRed);
+if(!isTracking&&now-lastDetectedTime>250){shotCount++;countElement.textContent=String(shotCount);}
+isTracking=true;lastDetectedTime=now;
+}else{
+coordinatesElement.textContent='—';brightnessElement.textContent='—';
+if(now-lastDetectedTime>160)isTracking=false;
+}
+}
+</script>
+</body></html>

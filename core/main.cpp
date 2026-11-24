@@ -213,11 +213,14 @@ int main(int argc, char** argv) {
     long long captureCount = 0;
     long long shotCount = 0;
     auto statisticsStart = std::chrono::steady_clock::now();
-    bool previousHit = false;
-    int missingFrames = 2;
+    bool shotActive = false;
+    int missingFrames = 0;
     auto lastShotTime = statisticsStart - std::chrono::seconds(1);
     int backgroundReadyFrames = 0;
     constexpr int laserChangeThreshold = 35;
+    constexpr int releaseAfterMissingFrames = 8;
+    constexpr int minimumShotIntervalMs = 350;
+    constexpr int maximumSpotArea = 280;
 
     std::cout << "Detector running without camera preview. Press Q in this console to quit.\n";
     while (running) {
@@ -255,7 +258,7 @@ int main(int argc, char** argv) {
         const int regions = cv::connectedComponentsWithStats(mask, labels, stats, centroids, 8);
         int bestRegion = -1;
         int bestArea = 0;
-        const int maximumArea = std::max(50, frame.rows * frame.cols / 40);
+        const int maximumArea = maximumSpotArea;
         for (int region = 1; region < regions; region++) {
             const int area = stats.at<int>(region, cv::CC_STAT_AREA);
             if (area >= 1 && area <= maximumArea && area > bestArea) {
@@ -265,14 +268,14 @@ int main(int argc, char** argv) {
         }
 
         const bool hit = bestRegion >= 0;
-        if (!hit && backgroundReadyFrames >= 3) {
-            cv::accumulateWeighted(red, backgroundFloat, 0.025);
-        }
+        // A flash is an edge, not every frame containing a bright spot.
+        // Keep the background frozen throughout the entire active pulse,
+        // including isolated frames where the detector fails to see it.
         if (hit) {
             missingFrames = 0;
             const auto millisecondsSinceShot =
                 std::chrono::duration_cast<std::chrono::milliseconds>(capturedAt - lastShotTime).count();
-            if (!previousHit && millisecondsSinceShot >= 150) {
+            if (!shotActive && millisecondsSinceShot >= minimumShotIntervalMs) {
                 const double pointX = (centroids.at<double>(bestRegion, 0) + 0.5) / frame.cols;
                 const double pointY = (centroids.at<double>(bestRegion, 1) + 0.5) / frame.rows;
                 const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -283,9 +286,15 @@ int main(int argc, char** argv) {
                 std::cout << "Shot " << shotCount << " at (" << pointX << ", "
                           << pointY << ")\n";
             }
-            previousHit = true;
-        } else if (++missingFrames >= 2) {
-            previousHit = false;
+            shotActive = true;
+        } else if (shotActive) {
+            if (++missingFrames >= releaseAfterMissingFrames) {
+                shotActive = false;
+                missingFrames = 0;
+                // Avoid training the background on the first few post-shot frames.
+            }
+        } else if (backgroundReadyFrames >= 3) {
+            cv::accumulateWeighted(red, backgroundFloat, 0.008);
         }
 
         const auto elapsed = std::chrono::duration<double>(
@@ -293,6 +302,7 @@ int main(int argc, char** argv) {
         if (elapsed >= 3.0) {
             std::cout << "Captured FPS: " << (captureCount / elapsed)
                       << " | candidate: " << (hit ? "YES" : "no")
+                      << " | state: " << (shotActive ? "HELD" : "READY")
                       << " | shots: " << shotCount << "\n";
             captureCount = 0;
             statisticsStart = std::chrono::steady_clock::now();

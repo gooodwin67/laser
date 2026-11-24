@@ -28,6 +28,91 @@ namespace {
 std::mutex socketMutex;
 SOCKET clientSocket = INVALID_SOCKET;
 std::atomic<bool> running{true};
+HWND previewWindow = nullptr;
+
+LRESULT CALLBACK previewWindowProcedure(HWND window, UINT message, WPARAM wordParameter, LPARAM longParameter) {
+    if (message == WM_CLOSE) {
+        DestroyWindow(window);
+        return 0;
+    }
+    if (message == WM_DESTROY) {
+        running = false;
+        previewWindow = nullptr;
+        return 0;
+    }
+    return DefWindowProcA(window, message, wordParameter, longParameter);
+}
+
+HWND createPreviewWindow() {
+    const char* className = "LaserCoreNativePreview";
+    WNDCLASSA windowClass = {};
+    windowClass.lpfnWndProc = previewWindowProcedure;
+    windowClass.hInstance = GetModuleHandleA(nullptr);
+    windowClass.lpszClassName = className;
+    windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    if (!RegisterClassA(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        return nullptr;
+    }
+    HWND window = CreateWindowExA(0, className,
+        "Laser Core - Camera / Detection mask (Q to exit)", WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT, 1150, 550,
+        nullptr, nullptr, windowClass.hInstance, nullptr);
+    if (window) {
+        ShowWindow(window, SW_SHOW);
+        UpdateWindow(window);
+    }
+    return window;
+}
+
+void drawPreview(const cv::Mat& cameraFrame, const cv::Mat& detectionMask,
+                 bool foundLaser, int detectionX, int detectionY) {
+    if (!previewWindow || cameraFrame.empty() || detectionMask.empty()) return;
+    cv::Mat cameraDisplay;
+    cv::Mat maskDisplay;
+    cameraFrame.copyTo(cameraDisplay);
+    cv::cvtColor(detectionMask, maskDisplay, cv::COLOR_GRAY2BGR);
+    if (foundLaser) {
+        const cv::Point center(detectionX, detectionY);
+        cv::circle(cameraDisplay, center, 13, cv::Scalar(0, 255, 0), 2);
+        cv::circle(maskDisplay, center, 13, cv::Scalar(0, 255, 0), 2);
+    }
+    cv::Mat cameraPixels;
+    cv::Mat maskPixels;
+    cv::cvtColor(cameraDisplay, cameraPixels, cv::COLOR_BGR2BGRA);
+    cv::cvtColor(maskDisplay, maskPixels, cv::COLOR_BGR2BGRA);
+
+    RECT clientRect = {};
+    GetClientRect(previewWindow, &clientRect);
+    const int totalWidth = clientRect.right - clientRect.left;
+    const int totalHeight = clientRect.bottom - clientRect.top;
+    if (totalWidth <= 40 || totalHeight <= 40) return;
+    const int panelWidth = totalWidth / 2;
+    const int panelHeight = totalHeight - 32;
+    BITMAPINFO bitmapInfo = {};
+    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmapInfo.bmiHeader.biWidth = cameraPixels.cols;
+    bitmapInfo.bmiHeader.biHeight = -cameraPixels.rows; // OpenCV top-down order
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+    HDC deviceContext = GetDC(previewWindow);
+    if (!deviceContext) return;
+    SetStretchBltMode(deviceContext, HALFTONE);
+    StretchDIBits(deviceContext, 0, 30, panelWidth, panelHeight,
+        0, 0, cameraPixels.cols, cameraPixels.rows,
+        cameraPixels.data, &bitmapInfo, DIB_RGB_COLORS, SRCCOPY);
+    StretchDIBits(deviceContext, panelWidth, 30, totalWidth - panelWidth, panelHeight,
+        0, 0, maskPixels.cols, maskPixels.rows,
+        maskPixels.data, &bitmapInfo, DIB_RGB_COLORS, SRCCOPY);
+    SetBkMode(deviceContext, OPAQUE);
+    SetBkColor(deviceContext, RGB(20, 30, 45));
+    SetTextColor(deviceContext, RGB(240, 250, 255));
+    TextOutA(deviceContext, 10, 8, "CAMERA (green ring = accepted onset)", 36);
+    TextOutA(deviceContext, panelWidth + 10, 8, "MASK (white = brightness rise)", 30);
+    ReleaseDC(previewWindow, deviceContext);
+}
+
 
 bool sendAll(SOCKET socket, const std::string& data) {
     size_t offset = 0;
@@ -180,6 +265,7 @@ int main(int argc, char** argv) {
     const int requestedFps = argumentValue(argc, argv, 4, 30);
     const int minimumBrightness = argumentValue(argc, argv, 5, 190);
     const int minimumRedDifference = argumentValue(argc, argv, 6, 45);
+    const int minimumSpotPixels = std::max(1, argumentValue(argc, argv, 7, 4));
 
     WSADATA winsockData = {};
     if (WSAStartup(MAKEWORD(2, 2), &winsockData) != 0) {
@@ -204,6 +290,9 @@ int main(int argc, char** argv) {
     std::cout << "Detector: minimum red=" << minimumBrightness
               << ", red-difference=" << minimumRedDifference << "\n";
 
+    previewWindow = createPreviewWindow();
+    if (!previewWindow) std::cerr << "Camera preview unavailable; detection will continue.\\n";
+
     std::thread serverThread(websocketServer);
     serverThread.detach(); // Process lifetime; accept loop ends when the process exits.
 
@@ -216,13 +305,14 @@ int main(int argc, char** argv) {
     auto statisticsStart = std::chrono::steady_clock::now();
     auto lastShotTime = statisticsStart - std::chrono::seconds(1);
     constexpr int redRiseThreshold = 28;
-    constexpr int minimumSpotPixels = 1;
+
     constexpr int maximumSpotPixels = 160;
     constexpr int minimumIntervalMilliseconds = 220;
 
     std::cout << "Onset detector: red rise >= " << redRiseThreshold
               << " in ONE captured frame; 220 ms debounce.\n";
-    std::cout << "Keep camera fixed. Press Q in this console to quit.\n";
+    std::cout << "Minimum spot area: " << minimumSpotPixels << " pixels. Camera preview shows raw frame and detection mask.\n";
+    std::cout << "Keep camera fixed. Press Q in this console or close the preview window.\n";
     while (running) {
         const auto readStart = std::chrono::steady_clock::now();
         if (!camera.read(frame) || frame.empty()) {
@@ -248,6 +338,8 @@ int main(int argc, char** argv) {
         int risingPixelCount = 0;
         int bestArea = 0;
         int strongestRise = 0;
+        int detectedX = -1;
+        int detectedY = -1;
         if (!previousRed.empty()) {
             // Difference from the preceding CAPTURED frame. A fixed red object
             // cannot remain a candidate merely because of a frozen background.
@@ -278,6 +370,8 @@ int main(int argc, char** argv) {
                     const int regionX = static_cast<int>(centroids.at<double>(bestRegion, 0));
                     const int regionY = static_cast<int>(centroids.at<double>(bestRegion, 1));
                     strongestRise = static_cast<int>(redRise.at<unsigned char>(regionY, regionX));
+                    detectedX = regionX;
+                    detectedY = regionY;
                     if (millisecondsSinceShot >= minimumIntervalMilliseconds) {
                         const double pointX =
                             (centroids.at<double>(bestRegion, 0) + 0.5) / frame.cols;
@@ -298,6 +392,18 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        // Show the raw camera frame and EXACT onset mask used by the detector.
+        // Throttle preview to avoid wasting time on rendering every frame.
+        if ((totalFrames % 3) == 0 && !onsetMask.empty()) {
+            drawPreview(frame, onsetMask, detectedOnset, detectedX, detectedY);
+        }
+        MSG windowMessage = {};
+        while (PeekMessageA(&windowMessage, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&windowMessage);
+            DispatchMessageA(&windowMessage);
+        }
+        if (!running) break;
+
         // ALWAYS update the reference frame, including during an extended
         // illumination. Thus holding a laser steady will not fire repeatedly.
         red.copyTo(previousRed);
@@ -320,6 +426,7 @@ int main(int argc, char** argv) {
         }
     }
     running = false;
+    if (previewWindow) DestroyWindow(previewWindow);
     closeCurrentClient();
     camera.release();
     WSACleanup();

@@ -46,6 +46,29 @@ Then visit `http://127.0.0.1:8080`. The first demo fetches Three.js from a
 CDN; an offline copy will be bundled later. The WebSocket connection itself
 is local and uses `ws://127.0.0.1:8765`.
 
+## Native camera preview and controls
+
+The latest native build opens a Windows preview with the camera on the left and
+the detection mask on the right. Beneath them you can change:
+
+- **Brightness** (0–255): minimum required red-channel brightness
+- **Red excess**: how much red must exceed green and blue
+- **Red change**: required increase compared with the immediately previous frame
+- **Spot pixels**: minimum connected laser spot area, default 4 (to reject isolated noise)
+- **Focus**: manual focus position (uncheck **Auto focus** to apply)
+- **Exposure**: DirectShow exposure setting, typically negative log2 values
+  (uncheck **Auto exposure** to apply)
+
+The application displays driver-reported exposure, focus and FPS. The sliders
+are experimental: if the USB camera or DirectShow driver does not support a
+particular control, it may ignore the value. Full camera format selection is
+not yet available in the UI: restart the EXE with the desired width, height
+and requested FPS arguments to change the capture mode.
+
+A short physical laser pulse entirely between camera exposures cannot be
+recovered by software. The preview is for diagnostics and can modestly
+reduce capture performance.
+
 ## What to test first
 
 1. Start the executable; confirm the actual video mode and captured FPS printed

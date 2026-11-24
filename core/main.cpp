@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <conio.h>
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
@@ -215,7 +216,7 @@ int main(int argc, char** argv) {
     int missingFrames = 2;
     auto lastShotTime = statisticsStart - std::chrono::seconds(1);
 
-    std::cout << "Press Q in the camera preview to quit.\n";
+    std::cout << "Detector running without camera preview. Press Q in this console to quit.\n";
     while (running) {
         if (!camera.read(frame) || frame.empty()) {
             std::cerr << "Camera read failed\n";
@@ -262,10 +263,6 @@ int main(int argc, char** argv) {
                           << pointY << ")\n";
             }
             previousHit = true;
-            cv::circle(frame,
-                cv::Point(static_cast<int>(centroids.at<double>(bestRegion, 0)),
-                          static_cast<int>(centroids.at<double>(bestRegion, 1))),
-                14, cv::Scalar(0, 255, 0), 2);
         } else if (++missingFrames >= 2) {
             previousHit = false;
         }
@@ -278,13 +275,14 @@ int main(int argc, char** argv) {
             statisticsStart = std::chrono::steady_clock::now();
         }
 
-        cv::imshow("Laser Core - native Windows detector", frame);
-        if ((cv::waitKey(1) & 0xff) == 'q') break;
+        if (_kbhit()) {
+            const int pressedKey = _getch();
+            if (pressedKey == 'q' || pressedKey == 'Q') break;
+        }
     }
     running = false;
     closeCurrentClient();
     camera.release();
-    cv::destroyAllWindows();
     WSACleanup();
     return 0;
 }

@@ -17,6 +17,8 @@ canvas{display:block}#hud{position:fixed;top:14px;left:14px;right:14px;display:f
 button{border:0;border-radius:10px;padding:13px 24px;background:#23a4ed;color:#061525;font-size:17px;font-weight:750;cursor:pointer}
 #toast{position:fixed;left:50%;top:26%;transform:translate(-50%,-50%);font-weight:800;font-size:30px;text-shadow:0 3px 22px #000;pointer-events:none;opacity:0;transition:opacity .15s;z-index:3}
 #toast.visible{opacity:1}
+#laserDebug{position:fixed;bottom:54px;left:16px;background:#081522e8;border:1px solid #487c92;border-radius:9px;padding:8px 11px;font:12px system-ui;z-index:3;color:#cde8fa;pointer-events:none}
+#laserDot{position:fixed;width:17px;height:17px;border:2px solid #ff4e59;border-radius:50%;transform:translate(-50%,-50%);z-index:3;pointer-events:none;display:none}
 @media(max-width:600px){#hud{top:8px;left:8px;right:8px;gap:5px}.metric{min-width:75px;padding:6px 9px}.metric strong{font-size:19px}.panel h1{font-size:30px}}
 </style>
 </head>
@@ -29,6 +31,8 @@ button{border:0;border-radius:10px;padding:13px 24px;background:#23a4ed;color:#0
 </div>
 <div id="connection">Камера: подключение к ws://127.0.0.1:8765… · Мышь тоже работает</div>
 <div id="toast"></div>
+<div id="laserDebug">Выстрелов с камеры: 0 · калибровка ещё не настроена</div>
+<div id="laserDot"></div>
 <div id="overlay"><div class="panel">
 <h1 id="panelTitle">LASER ARCADE</h1>
 <p id="panelDescription">Три движущиеся 3D-мишени. Попадай в них за 60 секунд.<br>Пока Windows-детектор собирается, играй мышью или касанием.</p>
@@ -271,6 +275,21 @@ const overlayElement=document.getElementById('overlay');
 const toastElement=document.getElementById('toast');
 
 const statusElement=document.getElementById('connection');
+const laserDebugElement=document.getElementById('laserDebug');
+const laserDotElement=document.getElementById('laserDot');
+let receivedShotCount=0;
+let laserDotTimer=null;
+function showCameraEvent(normalizedX,normalizedY){
+receivedShotCount++;
+laserDebugElement.textContent='Выстрелов с камеры: '+receivedShotCount+
+' · X '+(normalizedX*100).toFixed(1)+'% / Y '+(normalizedY*100).toFixed(1)+
+'% · координаты без калибровки!';
+laserDotElement.style.left=(normalizedX*100)+'%';
+laserDotElement.style.top=(normalizedY*100)+'%';
+laserDotElement.style.display='block';
+clearTimeout(laserDotTimer);
+laserDotTimer=setTimeout(()=>laserDotElement.style.display='none',500);
+}
 
 function refreshHud(){
 scoreElement.textContent=String(score);
@@ -363,7 +382,14 @@ socket.onerror=()=>statusElement.textContent='Камера: соединение
 socket.onmessage=event=>{
 try{
 const shot=JSON.parse(event.data);
-if(shot.type==='shot')shoot(Number(shot.x),Number(shot.y));
+if(shot.type==='shot'){
+const shotX=Number(shot.x);
+const shotY=Number(shot.y);
+if(Number.isFinite(shotX)&&Number.isFinite(shotY)&&shotX>=0&&shotX<=1&&shotY>=0&&shotY<=1){
+showCameraEvent(shotX,shotY);
+shoot(shotX,shotY);
+}
+}
 }catch(error){console.warn('Invalid shot event',error);}
 };
 }

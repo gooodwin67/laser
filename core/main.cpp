@@ -221,12 +221,12 @@ int main(int argc, char** argv) {
     constexpr int minimumIntervalMilliseconds = 220;
 
     std::cout << "Onset detector: red rise >= " << redRiseThreshold
-              << " in ONE captured frame; 220 ms debounce.\\n";
-    std::cout << "Keep camera fixed. Press Q in this console to quit.\\n";
+              << " in ONE captured frame; 220 ms debounce.\n";
+    std::cout << "Keep camera fixed. Press Q in this console to quit.\n";
     while (running) {
         const auto readStart = std::chrono::steady_clock::now();
         if (!camera.read(frame) || frame.empty()) {
-            std::cerr << "Camera read failed\\n";
+            std::cerr << "Camera read failed\n";
             break;
         }
         const auto capturedAt = std::chrono::steady_clock::now();
@@ -293,7 +293,7 @@ int main(int argc, char** argv) {
                                   << " at (" << pointX << ", " << pointY << ")"
                                   << " area=" << bestArea
                                   << " rise=" << strongestRise
-                                  << " read=" << readMilliseconds << "ms\\n";
+                                  << " read=" << readMilliseconds << "ms\n";
                     }
                 }
             }
@@ -309,7 +309,7 @@ int main(int argc, char** argv) {
                       << " | onset: " << (detectedOnset ? "YES" : "no")
                       << " | rising pixels: " << risingPixelCount
                       << " | read: " << readMilliseconds << "ms"
-                      << " | shots: " << shotCount << "\\n";
+                      << " | shots: " << shotCount << "\n";
             captureCount = 0;
             statisticsStart = std::chrono::steady_clock::now();
         }

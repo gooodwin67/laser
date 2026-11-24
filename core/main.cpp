@@ -207,103 +207,109 @@ int main(int argc, char** argv) {
     std::thread serverThread(websocketServer);
     serverThread.detach(); // Process lifetime; accept loop ends when the process exits.
 
-    cv::Mat frame, red, green, blue, otherMaximum, difference, brightMask, redMask, mask;
+    cv::Mat frame, red, green, blue, otherMaximum, redExcess;
+    cv::Mat brightMask, redMask, colorMask, previousRed, redRise, riseMask, onsetMask;
     cv::Mat labels, stats, centroids;
-    cv::Mat backgroundFloat, backgroundRed, changedRed, changedMask;
     long long captureCount = 0;
+    long long totalFrames = 0;
     long long shotCount = 0;
     auto statisticsStart = std::chrono::steady_clock::now();
-    bool shotActive = false;
-    int missingFrames = 0;
     auto lastShotTime = statisticsStart - std::chrono::seconds(1);
-    int backgroundReadyFrames = 0;
-    constexpr int laserChangeThreshold = 35;
-    constexpr int releaseAfterMissingFrames = 8;
-    constexpr int minimumShotIntervalMs = 350;
-    constexpr int maximumSpotArea = 280;
+    constexpr int redRiseThreshold = 28;
+    constexpr int minimumSpotPixels = 1;
+    constexpr int maximumSpotPixels = 160;
+    constexpr int minimumIntervalMilliseconds = 220;
 
-    std::cout << "Detector running without camera preview. Press Q in this console to quit.\n";
+    std::cout << "Onset detector: red rise >= " << redRiseThreshold
+              << " in ONE captured frame; 220 ms debounce.\\n";
+    std::cout << "Keep camera fixed. Press Q in this console to quit.\\n";
     while (running) {
+        const auto readStart = std::chrono::steady_clock::now();
         if (!camera.read(frame) || frame.empty()) {
-            std::cerr << "Camera read failed\n";
+            std::cerr << "Camera read failed\\n";
             break;
         }
-        captureCount++;
         const auto capturedAt = std::chrono::steady_clock::now();
+        const double readMilliseconds =
+            std::chrono::duration<double, std::milli>(capturedAt - readStart).count();
+        captureCount++;
+        totalFrames++;
 
         cv::extractChannel(frame, blue, 0);
         cv::extractChannel(frame, green, 1);
         cv::extractChannel(frame, red, 2);
         cv::max(blue, green, otherMaximum);
-        cv::subtract(red, otherMaximum, difference);
+        cv::subtract(red, otherMaximum, redExcess);
         cv::threshold(red, brightMask, minimumBrightness - 1, 255, cv::THRESH_BINARY);
-        cv::threshold(difference, redMask, minimumRedDifference - 1, 255, cv::THRESH_BINARY);
-        cv::bitwise_and(brightMask, redMask, mask);
-        // A static red area is not a laser shot. Require an increase in the red
-        // channel compared with the slowly updated background. Hold the
-        // background while a candidate is present to avoid absorbing a pulse.
-        if (backgroundFloat.empty()) {
-            red.convertTo(backgroundFloat, CV_32F);
-        }
-        backgroundFloat.convertTo(backgroundRed, CV_8U);
-        cv::subtract(red, backgroundRed, changedRed);
-        cv::threshold(changedRed, changedMask, laserChangeThreshold - 1, 255, cv::THRESH_BINARY);
-        cv::bitwise_and(mask, changedMask, mask);
-        if (backgroundReadyFrames < 3) {
-            backgroundReadyFrames++;
-            cv::accumulateWeighted(red, backgroundFloat, 0.25);
-            mask.setTo(0);
-        }
+        cv::threshold(redExcess, redMask, minimumRedDifference - 1, 255, cv::THRESH_BINARY);
+        cv::bitwise_and(brightMask, redMask, colorMask);
 
-        const int regions = cv::connectedComponentsWithStats(mask, labels, stats, centroids, 8);
-        int bestRegion = -1;
+        bool detectedOnset = false;
+        int risingPixelCount = 0;
         int bestArea = 0;
-        const int maximumArea = maximumSpotArea;
-        for (int region = 1; region < regions; region++) {
-            const int area = stats.at<int>(region, cv::CC_STAT_AREA);
-            if (area >= 1 && area <= maximumArea && area > bestArea) {
-                bestRegion = region;
-                bestArea = area;
-            }
-        }
+        int strongestRise = 0;
+        if (!previousRed.empty()) {
+            // Difference from the preceding CAPTURED frame. A fixed red object
+            // cannot remain a candidate merely because of a frozen background.
+            cv::subtract(red, previousRed, redRise);
+            cv::threshold(redRise, riseMask, redRiseThreshold - 1, 255, cv::THRESH_BINARY);
+            cv::bitwise_and(colorMask, riseMask, onsetMask);
+            risingPixelCount = cv::countNonZero(onsetMask);
 
-        const bool hit = bestRegion >= 0;
-        // A flash is an edge, not every frame containing a bright spot.
-        // Keep the background frozen throughout the entire active pulse,
-        // including isolated frames where the detector fails to see it.
-        if (hit) {
-            missingFrames = 0;
-            const auto millisecondsSinceShot =
-                std::chrono::duration_cast<std::chrono::milliseconds>(capturedAt - lastShotTime).count();
-            if (!shotActive && millisecondsSinceShot >= minimumShotIntervalMs) {
-                const double pointX = (centroids.at<double>(bestRegion, 0) + 0.5) / frame.cols;
-                const double pointY = (centroids.at<double>(bestRegion, 1) + 0.5) / frame.rows;
-                const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    capturedAt.time_since_epoch()).count();
-                sendShot(pointX, pointY, timestamp);
-                shotCount++;
-                lastShotTime = capturedAt;
-                std::cout << "Shot " << shotCount << " at (" << pointX << ", "
-                          << pointY << ")\n";
+            // Reject global exposure changes as they usually brighten hundreds
+            // or thousands of pixels simultaneously.
+            const int maximumGlobalChangedPixels = std::max(120, frame.rows * frame.cols / 200);
+            if (risingPixelCount > 0 && risingPixelCount <= maximumGlobalChangedPixels) {
+                const int regions = cv::connectedComponentsWithStats(
+                    onsetMask, labels, stats, centroids, 8);
+                int bestRegion = -1;
+                for (int region = 1; region < regions; region++) {
+                    const int area = stats.at<int>(region, cv::CC_STAT_AREA);
+                    if (area >= minimumSpotPixels && area <= maximumSpotPixels && area > bestArea) {
+                        bestRegion = region;
+                        bestArea = area;
+                    }
+                }
+                if (bestRegion >= 0) {
+                    detectedOnset = true;
+                    const auto millisecondsSinceShot =
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            capturedAt - lastShotTime).count();
+                    const int regionX = static_cast<int>(centroids.at<double>(bestRegion, 0));
+                    const int regionY = static_cast<int>(centroids.at<double>(bestRegion, 1));
+                    strongestRise = static_cast<int>(redRise.at<unsigned char>(regionY, regionX));
+                    if (millisecondsSinceShot >= minimumIntervalMilliseconds) {
+                        const double pointX =
+                            (centroids.at<double>(bestRegion, 0) + 0.5) / frame.cols;
+                        const double pointY =
+                            (centroids.at<double>(bestRegion, 1) + 0.5) / frame.rows;
+                        const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            capturedAt.time_since_epoch()).count();
+                        sendShot(pointX, pointY, timestamp);
+                        shotCount++;
+                        lastShotTime = capturedAt;
+                        std::cout << "Shot " << shotCount
+                                  << " frame=" << totalFrames
+                                  << " at (" << pointX << ", " << pointY << ")"
+                                  << " area=" << bestArea
+                                  << " rise=" << strongestRise
+                                  << " read=" << readMilliseconds << "ms\\n";
+                    }
+                }
             }
-            shotActive = true;
-        } else if (shotActive) {
-            if (++missingFrames >= releaseAfterMissingFrames) {
-                shotActive = false;
-                missingFrames = 0;
-                // Avoid training the background on the first few post-shot frames.
-            }
-        } else if (backgroundReadyFrames >= 3) {
-            cv::accumulateWeighted(red, backgroundFloat, 0.008);
         }
+        // ALWAYS update the reference frame, including during an extended
+        // illumination. Thus holding a laser steady will not fire repeatedly.
+        red.copyTo(previousRed);
 
         const auto elapsed = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - statisticsStart).count();
         if (elapsed >= 3.0) {
             std::cout << "Captured FPS: " << (captureCount / elapsed)
-                      << " | candidate: " << (hit ? "YES" : "no")
-                      << " | state: " << (shotActive ? "HELD" : "READY")
-                      << " | shots: " << shotCount << "\n";
+                      << " | onset: " << (detectedOnset ? "YES" : "no")
+                      << " | rising pixels: " << risingPixelCount
+                      << " | read: " << readMilliseconds << "ms"
+                      << " | shots: " << shotCount << "\\n";
             captureCount = 0;
             statisticsStart = std::chrono::steady_clock::now();
         }

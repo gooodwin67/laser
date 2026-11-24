@@ -209,12 +209,15 @@ int main(int argc, char** argv) {
 
     cv::Mat frame, red, green, blue, otherMaximum, difference, brightMask, redMask, mask;
     cv::Mat labels, stats, centroids;
+    cv::Mat backgroundFloat, backgroundRed, changedRed, changedMask;
     long long captureCount = 0;
     long long shotCount = 0;
     auto statisticsStart = std::chrono::steady_clock::now();
     bool previousHit = false;
     int missingFrames = 2;
     auto lastShotTime = statisticsStart - std::chrono::seconds(1);
+    int backgroundReadyFrames = 0;
+    constexpr int laserChangeThreshold = 35;
 
     std::cout << "Detector running without camera preview. Press Q in this console to quit.\n";
     while (running) {
@@ -233,6 +236,21 @@ int main(int argc, char** argv) {
         cv::threshold(red, brightMask, minimumBrightness - 1, 255, cv::THRESH_BINARY);
         cv::threshold(difference, redMask, minimumRedDifference - 1, 255, cv::THRESH_BINARY);
         cv::bitwise_and(brightMask, redMask, mask);
+        // A static red area is not a laser shot. Require an increase in the red
+        // channel compared with the slowly updated background. Hold the
+        // background while a candidate is present to avoid absorbing a pulse.
+        if (backgroundFloat.empty()) {
+            red.convertTo(backgroundFloat, CV_32F);
+        }
+        backgroundFloat.convertTo(backgroundRed, CV_8U);
+        cv::subtract(red, backgroundRed, changedRed);
+        cv::threshold(changedRed, changedMask, laserChangeThreshold - 1, 255, cv::THRESH_BINARY);
+        cv::bitwise_and(mask, changedMask, mask);
+        if (backgroundReadyFrames < 3) {
+            backgroundReadyFrames++;
+            cv::accumulateWeighted(red, backgroundFloat, 0.25);
+            mask.setTo(0);
+        }
 
         const int regions = cv::connectedComponentsWithStats(mask, labels, stats, centroids, 8);
         int bestRegion = -1;
@@ -247,6 +265,9 @@ int main(int argc, char** argv) {
         }
 
         const bool hit = bestRegion >= 0;
+        if (!hit && backgroundReadyFrames >= 3) {
+            cv::accumulateWeighted(red, backgroundFloat, 0.025);
+        }
         if (hit) {
             missingFrames = 0;
             const auto millisecondsSinceShot =
@@ -270,7 +291,9 @@ int main(int argc, char** argv) {
         const auto elapsed = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - statisticsStart).count();
         if (elapsed >= 3.0) {
-            std::cout << "Captured FPS: " << (captureCount / elapsed) << "\n";
+            std::cout << "Captured FPS: " << (captureCount / elapsed)
+                      << " | candidate: " << (hit ? "YES" : "no")
+                      << " | shots: " << shotCount << "\n";
             captureCount = 0;
             statisticsStart = std::chrono::steady_clock::now();
         }

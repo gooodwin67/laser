@@ -56,15 +56,33 @@ const rimLight=new THREE.PointLight(0x39aaff,38,13);
 rimLight.position.set(2,-1,4);
 scene.add(rimLight);
 
-const wall=new THREE.Mesh(new THREE.PlaneGeometry(24,13),new THREE.MeshStandardMaterial({color:0x132338,roughness:0.92}));
+// Procedural concrete wall with seams and subtle wear, no external texture files.
+const wallCanvas=document.createElement('canvas');
+wallCanvas.width=1024;
+wallCanvas.height=512;
+const wallContext=wallCanvas.getContext('2d');
+wallContext.fillStyle='#526070';
+wallContext.fillRect(0,0,1024,512);
+for(let speckIndex=0;speckIndex<18000;speckIndex++){
+const shade=Math.random()>0.5?255:0;
+wallContext.fillStyle='rgba('+shade+','+shade+','+shade+','+(0.015+Math.random()*0.075)+')';
+wallContext.fillRect(Math.random()*1024,Math.random()*512,1+Math.random()*3,1+Math.random()*3);
+}
+wallContext.strokeStyle='rgba(11,21,32,0.34)';
+wallContext.lineWidth=3;
+for(let seamY=0;seamY<=512;seamY+=128){
+wallContext.beginPath();wallContext.moveTo(0,seamY);wallContext.lineTo(1024,seamY);wallContext.stroke();
+}
+for(let seamX=0;seamX<=1024;seamX+=256){
+wallContext.beginPath();wallContext.moveTo(seamX,0);wallContext.lineTo(seamX,512);wallContext.stroke();
+}
+const wallTexture=new THREE.CanvasTexture(wallCanvas);
+wallTexture.colorSpace=THREE.SRGBColorSpace;
+const wall=new THREE.Mesh(new THREE.PlaneGeometry(24,13),new THREE.MeshStandardMaterial({
+map:wallTexture,color:0x8c9cab,roughness:1
+}));
 wall.position.z=-3.3;
 scene.add(wall);
-const linesMaterial=new THREE.LineBasicMaterial({color:0x2e5274,transparent:true,opacity:0.34});
-for(let index=-9;index<=9;index++){
-const horizontal=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-15,index*0.75,-3.1),new THREE.Vector3(15,index*0.75,-3.1)]);
-const vertical=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(index*1.4,-10,-3.1),new THREE.Vector3(index*1.4,10,-3.1)]);
-scene.add(new THREE.Line(horizontal,linesMaterial),new THREE.Line(vertical,linesMaterial));
-}
 const targets=[];
 const targetColors=[0x4fd4ff,0xffb64a,0xd78aff];
 for(let index=0;index<3;index++){
@@ -80,19 +98,104 @@ group.add(ring);
 scene.add(group);
 targets.push({group,sphere,ring,index,flashUntil:0});
 }
-// A shot decal sits on the backdrop plane, physically behind all moving spheres.
-const impactMarker=new THREE.Group();
-const impactMaterial=new THREE.MeshBasicMaterial({
-color:0x9cffbc,transparent:true,opacity:0.85,depthTest:true,depthWrite:false
+// Permanent scorch decals are in world space, behind the moving targets.
+const scorchMarks=[];
+const splashParticles=[];
+const scorchGeometry=new THREE.PlaneGeometry(1,1);
+const particleGeometry=new THREE.CircleGeometry(1,10);
+const particleMaterial=new THREE.MeshBasicMaterial({
+color:0x090c12,transparent:true,opacity:0.93,depthWrite:false
 });
-impactMarker.add(new THREE.Mesh(new THREE.RingGeometry(0.12,0.15,32),impactMaterial));
-const markerHorizontal=new THREE.Mesh(new THREE.PlaneGeometry(0.42,0.018),impactMaterial);
-const markerVertical=new THREE.Mesh(new THREE.PlaneGeometry(0.018,0.42),impactMaterial);
-impactMarker.add(markerHorizontal,markerVertical);
-impactMarker.position.z=-2.9;
-impactMarker.visible=false;
-scene.add(impactMarker);
-let impactMarkerExpiresAt=0;
+
+function createScorchTexture(){
+const canvas=document.createElement('canvas');
+canvas.width=128;
+canvas.height=128;
+const context=canvas.getContext('2d');
+context.clearRect(0,0,128,128);
+const centerX=64,centerY=64;
+const irregularity=Array.from({length:38},()=>0.72+Math.random()*0.32);
+context.beginPath();
+for(let section=0;section<irregularity.length;section++){
+const angle=section*2*Math.PI/irregularity.length;
+const radius=39*irregularity[section];
+const pointX=centerX+Math.cos(angle)*radius;
+const pointY=centerY+Math.sin(angle)*radius;
+if(section===0)context.moveTo(pointX,pointY);else context.lineTo(pointX,pointY);
+}
+context.closePath();
+context.fillStyle='rgba(3,5,7,0.93)';
+context.fill();
+for(let spotIndex=0;spotIndex<18;spotIndex++){
+const angle=Math.random()*Math.PI*2;
+const distance=27+Math.random()*27;
+context.beginPath();
+context.arc(centerX+Math.cos(angle)*distance,centerY+Math.sin(angle)*distance,0.7+Math.random()*3.3,0,Math.PI*2);
+context.fillStyle='rgba(6,7,10,'+(0.4+Math.random()*0.5)+')';
+context.fill();
+}
+const texture=new THREE.CanvasTexture(canvas);
+texture.colorSpace=THREE.SRGBColorSpace;
+return texture;
+}
+const scorchTextures=Array.from({length:6},createScorchTexture);
+let scorchTextureIndex=0;
+function addWallImpact(worldPosition){
+const texture=scorchTextures[scorchTextureIndex++%scorchTextures.length];
+const material=new THREE.MeshBasicMaterial({
+map:texture,transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1
+});
+const decal=new THREE.Mesh(scorchGeometry,material);
+const size=0.28+Math.random()*0.16;
+decal.scale.set(size,size*(0.85+Math.random()*0.3),1);
+decal.rotation.z=Math.random()*Math.PI*2;
+decal.position.set(worldPosition.x,worldPosition.y,-3.06);
+scene.add(decal);
+scorchMarks.push(decal);
+if(scorchMarks.length>100){
+const oldest=scorchMarks.shift();
+scene.remove(oldest);
+oldest.material.dispose();
+}
+// Short outward splash: independent little dark fragments, each with its own velocity.
+for(let particleIndex=0;particleIndex<12;particleIndex++){
+const angle=Math.random()*Math.PI*2;
+const speed=0.9+Math.random()*2.2;
+const radius=0.016+Math.random()*0.025;
+const particle=new THREE.Mesh(particleGeometry,particleMaterial);
+particle.position.set(worldPosition.x,worldPosition.y,-2.97);
+particle.scale.setScalar(radius);
+scene.add(particle);
+splashParticles.push({
+mesh:particle,
+velocityX:Math.cos(angle)*speed,
+velocityY:Math.sin(angle)*speed,
+startedAt:performance.now(),
+duration:180+Math.random()*140
+});
+}
+}
+function updateWallParticles(timestamp,deltaSeconds){
+for(let particleIndex=splashParticles.length-1;particleIndex>=0;particleIndex--){
+const particle=splashParticles[particleIndex];
+const elapsed=timestamp-particle.startedAt;
+if(elapsed>=particle.duration){
+scene.remove(particle.mesh);
+splashParticles.splice(particleIndex,1);
+continue;
+}
+const progress=elapsed/particle.duration;
+particle.mesh.position.x+=particle.velocityX*deltaSeconds*(1-progress);
+particle.mesh.position.y+=particle.velocityY*deltaSeconds*(1-progress);
+particle.mesh.scale.setScalar(0.026*(1-progress)+0.002);
+}
+}
+function resetWallMarks(){
+for(const decal of scorchMarks){scene.remove(decal);decal.material.dispose();}
+scorchMarks.length=0;
+for(const particle of splashParticles)scene.remove(particle.mesh);
+splashParticles.length=0;
+}
 
 let audioContext=null;
 let noiseBuffer=null;
@@ -196,15 +299,14 @@ target.sphere.material.emissiveIntensity=performance.now()<target.flashUntil?1.4
 function shoot(normalizedX,normalizedY){
 if(!gameActive)return;
 if(!Number.isFinite(normalizedX)||!Number.isFinite(normalizedY)||normalizedX<0||normalizedX>1||normalizedY<0||normalizedY>1)return;
-// Raycast against positions as they will be displayed in the current frame.
-updateTargets(performance.now()/1000);
+// Use the target transforms from the LAST rendered frame. Do not move them
+// during the input event: the player must hit what was actually displayed.
 pointer.set(normalizedX*2-1,1-normalizedY*2);
 raycaster.setFromCamera(pointer,camera);
 const intersection=raycaster.intersectObjects(targets.map(target=>target.sphere),false)[0];
 playShotSound();
 if(intersection){
-// On hit, hide the marker immediately, including one left by a previous miss.
-impactMarker.visible=false;
+// Hits never produce a wall stain; the sphere itself flashes.
 playHitSound();
 const target=targets.find(item=>item.sphere===intersection.object);
 target.flashUntil=performance.now()+150;
@@ -214,14 +316,9 @@ showToast('+100',true);
 }else{
 misses++;
 playMissSound();
-// The decal is on a real 3D plane and therefore cannot cover the spheres.
-const distanceToBackdrop=(-2.9-raycaster.ray.origin.z)/raycaster.ray.direction.z;
-if(distanceToBackdrop>0){
-const impactPosition=raycaster.ray.at(distanceToBackdrop,new THREE.Vector3());
-impactMarker.position.set(impactPosition.x,impactPosition.y,-2.9);
-impactMarker.visible=true;
-impactMarkerExpiresAt=performance.now()+100;
-}
+// Intersect the actual wall plane to place a persistent scorch mark.
+const wallIntersection=raycaster.intersectObject(wall,false)[0];
+if(wallIntersection)addWallImpact(wallIntersection.point);
 showToast('Промах',false);
 }
 refreshHud();
@@ -238,7 +335,7 @@ overlayElement.style.display='grid';
 }
 function startGame(){
 initializeAudio();
-impactMarker.visible=false;
+resetWallMarks();
 score=0;hits=0;misses=0;refreshHud();
 gameActive=true;
 gameEndsAt=performance.now()+60000;
@@ -273,10 +370,11 @@ if(shot.type==='shot')shoot(Number(shot.x),Number(shot.y));
 connect();
 function animate(timestamp){
 requestAnimationFrame(animate);
+const deltaSeconds=Math.min(0.05,Math.max(0,(timestamp-lastFrameTimestamp)/1000));
 lastFrameTimestamp=timestamp;
 const seconds=timestamp/1000;
 updateTargets(seconds);
-if(impactMarker.visible&&timestamp>=impactMarkerExpiresAt)impactMarker.visible=false;
+updateWallParticles(timestamp,deltaSeconds);
 if(gameActive){
 const remaining=Math.max(0,Math.ceil((gameEndsAt-timestamp)/1000));
 timerElement.textContent=String(remaining);

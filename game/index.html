@@ -3,80 +3,204 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laser Core + Three.js demo</title>
+<title>Laser Arcade — тестовая игра</title>
 <style>
-html,body{margin:0;overflow:hidden;background:#101725;font:16px system-ui;color:white}
-#status{position:fixed;top:12px;left:12px;background:#000a;padding:12px;border-radius:8px;z-index:2}
-#score{position:fixed;top:12px;right:12px;background:#000a;padding:12px;border-radius:8px;z-index:2}
-small{display:block;font-size:12px;color:#adbad0;margin-top:6px}
+*{box-sizing:border-box}html,body{height:100%;margin:0;overflow:hidden;background:#080f1d;color:#edf6ff;font:16px system-ui,Arial,sans-serif}
+canvas{display:block}#hud{position:fixed;top:14px;left:14px;right:14px;display:flex;gap:9px;flex-wrap:wrap;pointer-events:none;z-index:2}
+.metric{background:#071322dc;border:1px solid #4b70908c;border-radius:12px;padding:9px 14px;min-width:105px;backdrop-filter:blur(8px)}
+.metric small{color:#9cbed4;font-size:11px;display:block;text-transform:uppercase;letter-spacing:.08em}
+.metric strong{font-size:23px;font-variant-numeric:tabular-nums}
+#connection{position:fixed;bottom:16px;left:16px;background:#071322db;border:1px solid #39546b;border-radius:10px;padding:9px 13px;font-size:12px;color:#b3c5d9;z-index:2;max-width:calc(100vw - 32px)}
+#overlay{position:fixed;inset:0;background:#040913ad;display:grid;place-items:center;z-index:5;padding:18px}
+.panel{width:min(430px,100%);text-align:center;padding:30px 22px;background:linear-gradient(155deg,#182d42,#0a1728);border:1px solid #47718e;border-radius:18px;box-shadow:0 25px 80px #000a}
+.panel h1{font-size:38px;margin:4px 0 12px;letter-spacing:.02em}.panel p{color:#b9cde0;line-height:1.6}
+button{border:0;border-radius:10px;padding:13px 24px;background:#23a4ed;color:#061525;font-size:17px;font-weight:750;cursor:pointer}
+#toast{position:fixed;left:50%;top:26%;transform:translate(-50%,-50%);font-weight:800;font-size:30px;text-shadow:0 3px 22px #000;pointer-events:none;opacity:0;transition:opacity .15s;z-index:3}
+#toast.visible{opacity:1}
+#crosshair{position:fixed;width:22px;height:22px;border:2px solid #a6ffbc;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:3;display:none;box-shadow:0 0 12px #31ff66}
+#crosshair:after{content:"";position:absolute;top:8px;left:8px;width:2px;height:2px;background:white}
+@media(max-width:600px){#hud{top:8px;left:8px;right:8px;gap:5px}.metric{min-width:75px;padding:6px 9px}.metric strong{font-size:19px}.panel h1{font-size:30px}}
 </style>
 </head>
 <body>
-<div id="status">Подключение к Laser Core…<small>Для теста можно кликать мышью</small></div>
-<div id="score">Попаданий: 0</div>
+<div id="hud">
+<div class="metric"><small>Очки</small><strong id="score">0</strong></div>
+<div class="metric"><small>Попадания</small><strong id="hits">0</strong></div>
+<div class="metric"><small>Промахи</small><strong id="misses">0</strong></div>
+<div class="metric"><small>Время</small><strong id="timer">60</strong></div>
+</div>
+<div id="connection">Камера: подключение к ws://127.0.0.1:8765… · Мышь тоже работает</div>
+<div id="toast"></div><div id="crosshair"></div>
+<div id="overlay"><div class="panel">
+<h1 id="panelTitle">LASER ARCADE</h1>
+<p id="panelDescription">Три движущиеся 3D-мишени. Попадай в них за 60 секунд.<br>Пока Windows-детектор собирается, играй мышью или касанием.</p>
+<button id="playButton">Начать игру</button>
+</div></div>
 <script type="module">
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.181.0/build/three.module.js';
 
 const scene=new THREE.Scene();
-scene.background=new THREE.Color(0x101725);
-const camera=new THREE.PerspectiveCamera(45,window.innerWidth/window.innerHeight,0.1,100);
-camera.position.z=8;
-const renderer=new THREE.WebGLRenderer({antialias:true});
-renderer.setSize(window.innerWidth,window.innerHeight);
+scene.background=new THREE.Color(0x081323);
+scene.fog=new THREE.Fog(0x081323,13,26);
+const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.1,100);
+camera.position.set(0,0,11);
+const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.outputColorSpace=THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
-const ball=new THREE.Mesh(
-new THREE.SphereGeometry(0.75,48,32),
-new THREE.MeshStandardMaterial({color:0x4aa3ff,roughness:0.32,metalness:0.1})
-);
-scene.add(ball);
-scene.add(new THREE.HemisphereLight(0xffffff,0x18294a,2.5));
-const light=new THREE.DirectionalLight(0xffffff,2.2);
-light.position.set(2,3,5);
-scene.add(light);
-const raycaster=new THREE.Raycaster();
-let hitCount=0;
-const statusElement=document.getElementById('status');
-const scoreElement=document.getElementById('score');
+scene.add(new THREE.HemisphereLight(0x9bcaff,0x17223b,2.1));
+const keyLight=new THREE.DirectionalLight(0xffffff,2.7);
+keyLight.position.set(-3,5,7);
+scene.add(keyLight);
+const rimLight=new THREE.PointLight(0x39aaff,38,13);
+rimLight.position.set(2,-1,4);
+scene.add(rimLight);
 
-function checkShot(normalizedX,normalizedY){
-const position=new THREE.Vector2(normalizedX*2-1,1-normalizedY*2);
-raycaster.setFromCamera(position,camera);
-if(raycaster.intersectObject(ball).length){
-hitCount++;
-scoreElement.textContent='Попаданий: '+hitCount;
-ball.material.color.set(0xff9050);
-setTimeout(()=>ball.material.color.set(0x4aa3ff),120);
+const wall=new THREE.Mesh(new THREE.PlaneGeometry(24,13),new THREE.MeshStandardMaterial({color:0x132338,roughness:0.92}));
+wall.position.z=-3.3;
+scene.add(wall);
+const linesMaterial=new THREE.LineBasicMaterial({color:0x2e5274,transparent:true,opacity:0.34});
+for(let index=-9;index<=9;index++){
+const horizontal=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-15,index*0.75,-3.1),new THREE.Vector3(15,index*0.75,-3.1)]);
+const vertical=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(index*1.4,-10,-3.1),new THREE.Vector3(index*1.4,10,-3.1)]);
+scene.add(new THREE.Line(horizontal,linesMaterial),new THREE.Line(vertical,linesMaterial));
+}
+const targets=[];
+const targetColors=[0x4fd4ff,0xffb64a,0xd78aff];
+for(let index=0;index<3;index++){
+const group=new THREE.Group();
+const sphere=new THREE.Mesh(
+new THREE.SphereGeometry(0.73,32,24),
+new THREE.MeshStandardMaterial({color:targetColors[index],metalness:0.3,roughness:0.27,emissive:targetColors[index],emissiveIntensity:0.15})
+);
+group.add(sphere);
+const ring=new THREE.Mesh(new THREE.TorusGeometry(0.93,0.035,8,64),new THREE.MeshBasicMaterial({color:targetColors[index],transparent:true,opacity:0.65}));
+ring.position.z=-0.15;
+group.add(ring);
+scene.add(group);
+targets.push({group,sphere,ring,index,flashUntil:0});
+}
+const raycaster=new THREE.Raycaster();
+const pointer=new THREE.Vector2();
+let gameActive=false;
+let score=0;
+let hits=0;
+let misses=0;
+let gameEndsAt=0;
+let lastFrameTimestamp=performance.now();
+let toastTimer=0;
+const scoreElement=document.getElementById('score');
+const hitsElement=document.getElementById('hits');
+const missesElement=document.getElementById('misses');
+const timerElement=document.getElementById('timer');
+const overlayElement=document.getElementById('overlay');
+const toastElement=document.getElementById('toast');
+const crosshairElement=document.getElementById('crosshair');
+const statusElement=document.getElementById('connection');
+
+function refreshHud(){
+scoreElement.textContent=String(score);
+hitsElement.textContent=String(hits);
+missesElement.textContent=String(misses);
+}
+function showToast(message,hit){
+toastElement.textContent=message;
+toastElement.style.color=hit?'#7bffc5':'#ff8e96';
+toastElement.classList.add('visible');
+clearTimeout(toastTimer);
+toastTimer=setTimeout(()=>toastElement.classList.remove('visible'),260);
+}
+function updateTargets(seconds){
+const aspect=Math.max(0.65,Math.min(2.4,camera.aspect));
+const horizontalRange=3.55*Math.min(1,aspect/1.3);
+targets[0].group.position.set(Math.sin(seconds*1.15)*horizontalRange,1.55+Math.sin(seconds*1.8)*0.3,0);
+targets[1].group.position.set(Math.sin(seconds*1.7+2.2)*horizontalRange,-0.12+Math.cos(seconds*1.4)*0.65,0);
+targets[2].group.position.set(Math.sin(seconds*1.4+4.8)*horizontalRange,-1.8+Math.sin(seconds*2.1)*0.28,0);
+for(const target of targets){
+target.group.rotation.z=Math.sin(seconds*1.6+target.index)*0.12;
+target.ring.rotation.z=seconds*(0.2+target.index*0.15);
+target.sphere.material.emissiveIntensity=performance.now()<target.flashUntil?1.4:0.15;
 }
 }
-const socket=new WebSocket('ws://127.0.0.1:8765');
-socket.onopen=()=>statusElement.firstChild.textContent='Laser Core подключён';
-socket.onclose=()=>statusElement.firstChild.textContent='Нет соединения с Laser Core';
-socket.onerror=()=>statusElement.firstChild.textContent='Ошибка WebSocket';
+function shoot(normalizedX,normalizedY){
+if(!gameActive)return;
+if(!Number.isFinite(normalizedX)||!Number.isFinite(normalizedY)||normalizedX<0||normalizedX>1||normalizedY<0||normalizedY>1)return;
+pointer.set(normalizedX*2-1,1-normalizedY*2);
+raycaster.setFromCamera(pointer,camera);
+const intersection=raycaster.intersectObjects(targets.map(target=>target.sphere),false)[0];
+crosshairElement.style.left=(normalizedX*100)+'%';
+crosshairElement.style.top=(normalizedY*100)+'%';
+crosshairElement.style.display='block';
+clearTimeout(shoot.crosshairTimer);
+shoot.crosshairTimer=setTimeout(()=>crosshairElement.style.display='none',180);
+if(intersection){
+const target=targets.find(item=>item.sphere===intersection.object);
+target.flashUntil=performance.now()+150;
+hits++;
+score+=100;
+showToast('+100',true);
+}else{
+misses++;
+showToast('Промах',false);
+}
+refreshHud();
+}
+function endGame(){
+if(!gameActive)return;
+gameActive=false;
+document.getElementById('panelTitle').textContent='Раунд завершён';
+document.getElementById('panelDescription').textContent='Очки: '+score+' · Попаданий: '+hits+' · Промахов: '+misses;
+document.getElementById('playButton').textContent='Ещё раз';
+overlayElement.style.display='grid';
+}
+function startGame(){
+score=0;hits=0;misses=0;refreshHud();
+gameActive=true;
+gameEndsAt=performance.now()+60000;
+timerElement.textContent='60';
+overlayElement.style.display='none';
+}
+document.getElementById('playButton').addEventListener('click',startGame);
+renderer.domElement.addEventListener('pointerdown',event=>{
+shoot(event.clientX/innerWidth,event.clientY/innerHeight);
+});
+let socket;
+function connect(){
+socket=new WebSocket('ws://127.0.0.1:8765');
+socket.onopen=()=>statusElement.textContent='Камера: Laser Core подключён · Мышь тоже работает';
+socket.onclose=()=>{
+statusElement.textContent='Камера: нет соединения · Играть можно мышью';
+setTimeout(connect,2500);
+};
+socket.onerror=()=>statusElement.textContent='Камера: соединение недоступно · Играй мышью';
 socket.onmessage=event=>{
 try{
 const shot=JSON.parse(event.data);
-if(shot.type==='shot'&&Number.isFinite(shot.x)&&Number.isFinite(shot.y)){
-checkShot(shot.x,shot.y);
-}
-}catch(error){console.warn('Bad shot event',error);}
+if(shot.type==='shot')shoot(Number(shot.x),Number(shot.y));
+}catch(error){console.warn('Invalid shot event',error);}
 };
-renderer.domElement.addEventListener('pointerdown',event=>{
-checkShot(event.clientX/window.innerWidth,event.clientY/window.innerHeight);
-});
-window.addEventListener('resize',()=>{
-camera.aspect=window.innerWidth/window.innerHeight;
-camera.updateProjectionMatrix();
-renderer.setSize(window.innerWidth,window.innerHeight);
-});
-const clock=new THREE.Clock();
-function animate(){
+}
+connect();
+function animate(timestamp){
 requestAnimationFrame(animate);
-ball.position.x=Math.sin(clock.getElapsedTime()*1.4)*2.2;
-ball.rotation.y+=0.01;
+lastFrameTimestamp=timestamp;
+const seconds=timestamp/1000;
+updateTargets(seconds);
+if(gameActive){
+const remaining=Math.max(0,Math.ceil((gameEndsAt-timestamp)/1000));
+timerElement.textContent=String(remaining);
+if(remaining===0)endGame();
+}
 renderer.render(scene,camera);
 }
-animate();
+requestAnimationFrame(animate);
+window.addEventListener('resize',()=>{
+camera.aspect=innerWidth/innerHeight;
+camera.updateProjectionMatrix();
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+});
 </script>
-</body>
-</html>
+</body></html>

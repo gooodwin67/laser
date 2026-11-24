@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <conio.h>
 #include <cstring>
 #include <cstdlib>
@@ -562,6 +563,13 @@ int main(int argc, char** argv) {
         const auto elapsed = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - statisticsStart).count();
         if (elapsed >= 3.0) {
+            if(previewWindow&&cameraStatusLabel){
+                std::ostringstream actualSettings;
+                actualSettings << "Actual focus: " << camera.get(cv::CAP_PROP_FOCUS)
+                               << " | exposure: " << camera.get(cv::CAP_PROP_EXPOSURE)
+                               << " | FPS: " << camera.get(cv::CAP_PROP_FPS);
+                SetWindowTextA(cameraStatusLabel,actualSettings.str().c_str());
+            }
             std::cout << "Captured FPS: " << (captureCount / elapsed)
                       << " | onset: " << (detectedOnset ? "YES" : "no")
                       << " | rising pixels: " << risingPixelCount

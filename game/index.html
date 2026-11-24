@@ -44,7 +44,7 @@ const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.1,100);
 camera.position.set(0,0,11);
 const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
 renderer.setSize(innerWidth,innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
 renderer.outputColorSpace=THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
@@ -185,17 +185,19 @@ function updateTargets(seconds){
 const aspect=Math.max(0.65,Math.min(2.4,camera.aspect));
 const horizontalRange=3.55*Math.min(1,aspect/1.3);
 targets[0].group.position.set(Math.sin(seconds*1.15)*horizontalRange,1.55+Math.sin(seconds*1.8)*0.3,0);
-targets[1].group.position.set(Math.sin(seconds*1.7+2.2)*horizontalRange,-0.12+Math.cos(seconds*1.4)*0.65,0);
+targets[1].group.position.set(0,0,0); // Центральный шар неподвижен.
 targets[2].group.position.set(Math.sin(seconds*1.4+4.8)*horizontalRange,-1.8+Math.sin(seconds*2.1)*0.28,0);
 for(const target of targets){
-target.group.rotation.z=Math.sin(seconds*1.6+target.index)*0.12;
-target.ring.rotation.z=seconds*(0.2+target.index*0.15);
+target.group.rotation.z=target.index===1?0:Math.sin(seconds*1.6+target.index)*0.12;
+target.ring.rotation.z=target.index===1?0:seconds*(0.2+target.index*0.15);
 target.sphere.material.emissiveIntensity=performance.now()<target.flashUntil?1.4:0.15;
 }
 }
 function shoot(normalizedX,normalizedY){
 if(!gameActive)return;
 if(!Number.isFinite(normalizedX)||!Number.isFinite(normalizedY)||normalizedX<0||normalizedX>1||normalizedY<0||normalizedY>1)return;
+// Raycast against positions as they will be displayed in the current frame.
+updateTargets(performance.now()/1000);
 pointer.set(normalizedX*2-1,1-normalizedY*2);
 raycaster.setFromCamera(pointer,camera);
 const intersection=raycaster.intersectObjects(targets.map(target=>target.sphere),false)[0];
@@ -218,11 +220,13 @@ if(distanceToBackdrop>0){
 const impactPosition=raycaster.ray.at(distanceToBackdrop,new THREE.Vector3());
 impactMarker.position.set(impactPosition.x,impactPosition.y,-2.9);
 impactMarker.visible=true;
-impactMarkerExpiresAt=performance.now()+180;
+impactMarkerExpiresAt=performance.now()+100;
 }
 showToast('Промах',false);
 }
 refreshHud();
+// Display the result in this input task rather than waiting for another animation frame.
+renderer.render(scene,camera);
 }
 function endGame(){
 if(!gameActive)return;
@@ -243,7 +247,12 @@ overlayElement.style.display='none';
 }
 document.getElementById('playButton').addEventListener('click',startGame);
 renderer.domElement.addEventListener('pointerdown',event=>{
-shoot(event.clientX/innerWidth,event.clientY/innerHeight);
+// Map the actual pointer event to the canvas rectangle, not the window size.
+const canvasRectangle=renderer.domElement.getBoundingClientRect();
+shoot(
+(event.clientX-canvasRectangle.left)/canvasRectangle.width,
+(event.clientY-canvasRectangle.top)/canvasRectangle.height
+);
 });
 let socket;
 function connect(){
@@ -280,7 +289,7 @@ window.addEventListener('resize',()=>{
 camera.aspect=innerWidth/innerHeight;
 camera.updateProjectionMatrix();
 renderer.setSize(innerWidth,innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
 });
 </script>
 </body></html>

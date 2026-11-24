@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#101722">
-<title>Laser Lab 2.0</title>
+<title>Laser Lab 2.3 — диагностика</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#101722;color:#f6f8fc;font:15px system-ui,Arial,sans-serif}
 header,main{padding:14px}h1{font-size:20px;margin:0 0 5px}h2{font-size:16px;margin:18px 0 8px}small,.hint{color:#9db0c6}
@@ -21,16 +21,23 @@ input[type=range]{width:100%;accent-color:#4aafff}select{width:100%;margin-top:5
 #status{margin:9px 0;color:#a8cae9;min-height:20px}
 hr{border:0;border-top:1px solid #2c3d50;margin:17px 0}
 #exposureControls{display:none}#exposureControls.visible{display:block}
+.help{display:block;color:#a8bcd0;font-size:12px;line-height:1.5;margin:3px 0 10px}
+.debugPanel{border:1px solid #39506a;border-radius:10px;padding:12px;margin:16px 0;background:#152134}
+.debugGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}
+.debugCell{padding:8px;background:#20334a;border-radius:8px;font-size:12px;color:#a9bcd0}
+.debugCell b{display:block;font-size:17px;color:#fff}
+#debugPanel[hidden]{display:none}
 </style>
 </head>
 <body>
-<header><h1>Laser Lab 2.0</h1><small>Эксперимент: Android-камера и лазерная указка</small></header>
+<header><h1>Laser Lab 2.3</h1><small>Эксперимент: USB-камера или Android и лазер</small></header>
 <div id="cameraArea"><video id="video" playsinline muted autoplay></video><canvas id="overlay"></canvas></div>
 <main>
 <div class="controls">
 <button class="primary" id="startButton">Включить камеру</button>
 <button id="switchButton">Сменить камеру</button>
 <button id="resetButton">Сбросить счёт</button>
+<button id="debugButton" aria-expanded="true">Скрыть дебаг</button>
 </div>
 <p id="status">Камера выключена</p>
 <div class="stats">
@@ -39,6 +46,24 @@ hr{border:0;border-top:1px solid #2c3d50;margin:17px 0}
 <div class="stat">FPS обработки<b id="fps">0</b></div>
 <div class="stat">Размер пятна<b id="spotSize">—</b></div>
 </div>
+<section class="debugPanel" id="debugPanel">
+<h2 style="margin-top:0">Диагностика захвата</h2>
+<div class="debugGrid">
+<div class="debugCell">FPS камеры (новые кадры)<b id="cameraFps">—</b></div>
+<div class="debugCell">FPS обработки<b id="debugFps">—</b></div>
+<div class="debugCell">Время обработки кадра<b id="processingTime">—</b></div>
+<div class="debugCell">Принятые кадры камеры<b id="cameraFrames">0</b></div>
+<div class="debugCell">Проверенные кадры<b id="processedFrames">0</b></div>
+<div class="debugCell">Кадры с точкой<b id="positiveFrames">0</b></div>
+<div class="debugCell">Длительность последнего появления<b id="lastPulse">—</b></div>
+<div class="debugCell">Длительность текущего появления<b id="currentPulse">—</b></div>
+<div class="debugCell">Кадров в последнем появлении<b id="pulseFrames">—</b></div>
+<div class="debugCell">Интервал между появлениями<b id="pulseInterval">—</b></div>
+<div class="debugCell">Активных пикселей маски<b id="activePixels">0</b></div>
+<div class="debugCell">Фактические параметры камеры<b id="cameraSettings">—</b></div>
+</div>
+<p class="help">FPS камеры измеряется через requestVideoFrameCallback, если браузер поддерживает его. Время появления оценивается по обработанным кадрам, это не точная длительность лазерного импульса. Полностью пропущенные камерой вспышки программа посчитать не может.</p>
+</section>
 <h2>Детектор</h2>
 <label>Режим
 <select id="mode">
@@ -46,26 +71,29 @@ hr{border:0;border-top:1px solid #2c3d50;margin:17px 0}
 <option value="bright">Яркая точка (под фильтр)</option>
 <option value="difference">Изменение между кадрами</option>
 </select></label>
+<span class="help">Красный — ищет преобладание красного канала; яркая точка — ищет светлые области на затемнённом кадре; изменение — сравнивает соседние обработанные кадры (камера должна стоять неподвижно).</span>
 <label>Ширина обработки
 <select id="resolution"><option value="320">320 пикселей (быстро)</option><option value="640" selected>640 пикселей</option><option value="960">960 пикселей</option><option value="1280">1280 пикселей (медленно)</option></select></label>
-<label class="inline"><input id="processedPreview" type="checkbox"> Показывать обработанное изображение</label>
-<label>Минимальная яркость: <b id="brightnessValue">190</b><input type="range" min="20" max="255" value="190" id="brightness"></label>
-<label>Преобладание красного: <b id="redValue">45</b><input type="range" min="0" max="160" value="45" id="redDifference"></label>
-<label>Разница между кадрами: <b id="changeValue">55</b><input type="range" min="10" max="200" value="55" id="changeThreshold"></label>
-<label>Минимальный размер пятна (пикс.): <b id="minimumSizeValue">1</b><input type="range" min="1" max="40" value="1" id="minimumSize"></label>
+<span class="help">Разрешение анализа, а не самой камеры. Больше — точнее мелкое пятно, но больше нагрузка и риск пропустить короткий импульс во время обработки.</span>
+<label class="inline"><input id="processedPreview" type="checkbox"> Показывать обработанное изображение</label><span class="help">Вместо видео показывает бинарную маску: белое — пиксели, прошедшие пороги детектора.</span>
+<label>Минимальная яркость: <b id="brightnessValue">190</b><input type="range" min="20" max="255" value="190" id="brightness"></label><span class="help">Минимальная яркость пикселя от 0 до 255. Выше — меньше ложных срабатываний, но слабый лазер может исчезнуть.</span>
+<label>Преобладание красного: <b id="redValue">45</b><input type="range" min="0" max="160" value="45" id="redDifference"></label><span class="help">Насколько красный канал должен быть ярче зелёного и синего. Только режим «Красный цвет».</span>
+<label>Разница между кадрами: <b id="changeValue">55</b><input type="range" min="10" max="200" value="55" id="changeThreshold"></label><span class="help">Насколько пиксель должен стать светлее предыдущего обработанного кадра. Только режим «Изменение».</span>
+<label>Минимальный размер пятна (пикс.): <b id="minimumSizeValue">1</b><input type="range" min="1" max="40" value="1" id="minimumSize"></label><span class="help">Минимальное число соседних пикселей пятна. Больше — меньше одиночного шума, но слабые точки отсеиваются.</span>
 <p class="hint">«Красный цвет» — без фильтра. «Яркая точка» — при сильно затемнённом изображении. «Изменение» — при неподвижном телефоне и кратком включении указки. Никакой из режимов не гарантирует распознавания на пересвеченном фоне.</p>
 <hr>
 <h2>Настройки камеры</h2>
 <p id="exposureStatus" class="hint">После включения проверим поддержку ручной экспозиции.</p>
 <p id="focusStatus" class="hint">Проверим, доступна ли настройка фокуса.</p>
 <div id="focusControls" style="display:none">
-<button id="autoFocus">Автофокус</button><button id="manualFocus">Зафиксировать фокус</button>
-<label>Фокус: <b id="focusValue">—</b><input id="focusDistance" type="range"></label>
+<button id="autoFocus">Автофокус</button><button id="manualFocus">Зафиксировать фокус</button><span class="help">На неподвижной стене ручной фокус полезен: камера перестанет искать резкость во время выстрелов.</span>
+<label>Фокус: <b id="focusValue">—</b><input id="focusDistance" type="range"></label><span class="help">Положение линзы в единицах, которые сообщает драйвер камеры. Подберите максимальную чёткость точки.</span>
 </div>
 <div id="exposureControls">
 <button id="autoExposure">Автоэкспозиция</button>
-<button id="manualExposure">Ручная экспозиция</button>
-<label>Выдержка: <b id="exposureValue">—</b><input id="exposureTime" type="range"></label>
+<button id="manualExposure">Ручная экспозиция</button><span class="help">Авто меняет яркость под сцену; ручной режим удерживает её стабильной. Для тира обычно лучше ручной.</span>
+<label>Выдержка (тонкая регулировка): <b id="exposureValue">—</b><input id="exposureTime" type="range" min="0" max="1000" step="1"></label>
+<span class="help" id="exposureRangeInfo">Ползунок использует нелинейную шкалу: большая часть хода отведена коротким выдержкам. Реальный минимум задаёт драйвер камеры, ниже него браузер выставить нельзя.</span>
 </div>
 <p class="hint">В браузере Android ручная экспозиция часто недоступна. Программный порог не заменяет физическое уменьшение выдержки или оптический фильтр.</p>
 <hr>
@@ -97,6 +125,15 @@ let exposureCapabilities=null;
 let exposureSupported=false;
 let focusSupported=false;
 let focusCapabilities=null;
+let cameraFrameCount=0;
+let processedFrameCount=0;
+let positiveFrameCount=0;
+let lastCameraFrameTimestamp=0;
+let smoothedCameraFps=0;
+let pulseStartTime=0;
+let pulseFrameCounter=0;
+let lastPulseStartTime=0;
+let displayDebug=true;
 function connectRange(inputName,valueName){
 const input=element(inputName);
 input.addEventListener('input',()=>element(valueName).textContent=input.value);
@@ -105,7 +142,13 @@ connectRange('brightness','brightnessValue');
 connectRange('redDifference','redValue');
 connectRange('changeThreshold','changeValue');
 connectRange('minimumSize','minimumSizeValue');
-element('resetButton').onclick=()=>{detections=0;element('count').textContent='0'};
+element('resetButton').onclick=()=>{detections=0;element('count').textContent='0';positiveFrameCount=0;element('positiveFrames').textContent='0'};
+element('debugButton').onclick=()=>{
+displayDebug=!displayDebug;
+element('debugPanel').hidden=!displayDebug;
+element('debugButton').textContent=displayDebug?'Скрыть дебаг':'Показать дебаг';
+element('debugButton').setAttribute('aria-expanded',String(displayDebug));
+};
 element('startButton').onclick=()=>startCamera();
 element('switchButton').onclick=()=>{cameraFacing=cameraFacing==='environment'?'user':'environment';startCamera()};
 element('resolution').onchange=()=>{previousPixels=null;scanMask=null;visited=null;queue=null};
@@ -114,6 +157,10 @@ async function startCamera(){
 const thisSession=++sessionNumber;
 if(cameraStream)cameraStream.getTracks().forEach(track=>track.stop());
 cameraStream=null;cameraTrack=null;previousPixels=null;wasDetected=false;
+cameraFrameCount=0;processedFrameCount=0;positiveFrameCount=0;lastCameraFrameTimestamp=0;smoothedCameraFps=0;
+pulseStartTime=0;pulseFrameCounter=0;lastPulseStartTime=0;
+for(const item of ['cameraFrames','processedFrames','positiveFrames'])element(item).textContent='0';
+for(const item of ['lastPulse','currentPulse','pulseFrames','pulseInterval','cameraFps'])element(item).textContent='—';
 element('status').textContent='Запрашиваю камеру…';
 element('exposureControls').classList.remove('visible');
 try{
@@ -126,6 +173,25 @@ element('status').textContent='Камера работает: '+video.videoWidth
 lastFrameTime=performance.now();
 inspectExposure();
 inspectFocus();
+const cameraFrameCallback=(timestamp,metadata)=>{
+if(thisSession!==sessionNumber||!cameraStream)return;
+cameraFrameCount++;
+if(lastCameraFrameTimestamp){
+const elapsed=timestamp-lastCameraFrameTimestamp;
+if(elapsed>0){
+const instantaneousFps=1000/elapsed;
+smoothedCameraFps=smoothedCameraFps?smoothedCameraFps*0.85+instantaneousFps*0.15:instantaneousFps;
+}
+}
+lastCameraFrameTimestamp=timestamp;
+if(displayDebug){
+element('cameraFps').textContent=smoothedCameraFps?smoothedCameraFps.toFixed(1):'—';
+element('cameraFrames').textContent=String(cameraFrameCount);
+}
+video.requestVideoFrameCallback(cameraFrameCallback);
+};
+if(video.requestVideoFrameCallback)video.requestVideoFrameCallback(cameraFrameCallback);
+else element('cameraFps').textContent='API недоступен';
 requestAnimationFrame(time=>processFrame(time,thisSession));
 }catch(error){element('status').textContent='Ошибка: '+error.message;}
 }
@@ -176,13 +242,24 @@ return;
 }
 const limits=exposureCapabilities.exposureTime;
 const slider=element('exposureTime');
-slider.min=String(limits.min);slider.max=String(limits.max);
-slider.step=String(limits.step||Math.max((limits.max-limits.min)/500,0.00001));
-slider.value=String(cameraTrack.getSettings?.().exposureTime??limits.min);
-element('exposureValue').textContent=slider.value;
+slider.min='0';slider.max='1000';slider.step='1';
+const initialExposure=cameraTrack.getSettings?.().exposureTime??limits.min;
+slider.value=String(exposurePositionFromValue(initialExposure,limits));
+element('exposureValue').textContent=String(initialExposure);
+element('exposureRangeInfo').textContent='Диапазон камеры: '+limits.min+'–'+limits.max+' (единицы драйвера). Нелинейный ползунок даёт более тонкую настройку у минимума, но не расширяет аппаратный диапазон.';
 element('exposureStatus').textContent='Ручная выдержка поддерживается. Уменьшайте её, пока фон не потемнеет.';
 element('exposureControls').classList.add('visible');
 }catch(error){element('exposureStatus').textContent='Не удалось прочитать настройки: '+error.message;}
+}
+function exposureValueFromPosition(position,limits){
+const fraction=Math.pow(Math.max(0,Math.min(1,Number(position)/1000)),3);
+const value=limits.min+(limits.max-limits.min)*fraction;
+const step=limits.step||0;
+return step>0?Math.max(limits.min,Math.min(limits.max,limits.min+Math.round((value-limits.min)/step)*step)):value;
+}
+function exposurePositionFromValue(value,limits){
+if(limits.max<=limits.min)return 0;
+return 1000*Math.cbrt(Math.max(0,Math.min(1,(value-limits.min)/(limits.max-limits.min))));
 }
 async function setExposure(mode){
 if(!cameraTrack||!exposureSupported)return;
@@ -194,9 +271,13 @@ element('exposureStatus').textContent='Экспозиция: '+mode;
 }
 async function setExposureTime(){
 if(!cameraTrack||!exposureSupported)return;
-const value=Number(element('exposureTime').value);
+const value=exposureValueFromPosition(element('exposureTime').value,exposureCapabilities.exposureTime);
 element('exposureValue').textContent=String(value);
-try{await cameraTrack.applyConstraints({advanced:[{exposureMode:'manual',exposureTime:value}]});}
+try{
+await cameraTrack.applyConstraints({advanced:[{exposureMode:'manual',exposureTime:value}]});
+const actual=cameraTrack.getSettings?.().exposureTime;
+if(actual!==undefined)element('exposureValue').textContent=String(actual);
+}
 catch(error){element('exposureStatus').textContent='Не удалось выставить выдержку: '+error.message;}
 }
 element('autoExposure').onclick=()=>setExposure('continuous');
@@ -207,6 +288,9 @@ if(thisSession!==sessionNumber||!cameraStream)return;
 requestAnimationFrame(time=>processFrame(time,thisSession));
 if(video.readyState<2||now-lastFrameTime<40)return;
 const frameTime=now-lastFrameTime;lastFrameTime=now;
+const processingStart=performance.now();
+processedFrameCount++;
+if(displayDebug)element('processedFrames').textContent=String(processedFrameCount);
 element('fps').textContent=String(Math.round(1000/frameTime));
 const width=Number(element('resolution').value);
 const height=Math.max(1,Math.round(width*video.videoHeight/video.videoWidth));
@@ -228,6 +312,7 @@ const mode=element('mode').value;
 const pixelCount=width*height;
 scanMask.fill(0);
 visited.fill(0);
+let activePixelCount=0;
 let currentImage=element('processedPreview').checked?maskContext.createImageData(width,height):null;
 for(let pixel=0;pixel<pixelCount;pixel++){
 const offset=pixel*4;
@@ -240,7 +325,7 @@ else if(previousPixels){
 const oldPeak=Math.max(previousPixels[offset],previousPixels[offset+1],previousPixels[offset+2]);
 active=peak>=brightnessThreshold&&peak-oldPeak>=changeThreshold;
 }
-if(active)scanMask[pixel]=1;
+if(active){scanMask[pixel]=1;activePixelCount++;}
 if(currentImage){
 const value=active?255:0;
 currentImage.data[offset]=value;
@@ -296,6 +381,15 @@ overlayContext.fillRect(0,0,frameWidth,frameHeight);
 overlayContext.drawImage(maskCanvas,left,top,displayedWidth,displayedHeight);
 }
 if(bestComponent){
+positiveFrameCount++;
+if(!wasDetected){
+pulseStartTime=now;
+pulseFrameCounter=0;
+if(displayDebug&&lastPulseStartTime)element('pulseInterval').textContent=(now-lastPulseStartTime).toFixed(0)+' мс';
+lastPulseStartTime=now;
+}
+pulseFrameCounter++;
+if(displayDebug)element('currentPulse').textContent=(now-pulseStartTime).toFixed(0)+' мс';
 const pointX=left+(bestComponent.x+0.5)/width*displayedWidth;
 const pointY=top+(bestComponent.y+0.5)/height*displayedHeight;
 overlayContext.strokeStyle='#21ff83';
@@ -312,7 +406,24 @@ wasDetected=true;lastDetectedTime=now;
 }else{
 element('coordinates').textContent='—';
 element('spotSize').textContent='—';
-if(now-lastDetectedTime>130)wasDetected=false;
+if(now-lastDetectedTime>130&&wasDetected){
+wasDetected=false;
+if(displayDebug){
+element('lastPulse').textContent=(lastDetectedTime-pulseStartTime).toFixed(0)+' мс';
+element('pulseFrames').textContent=String(pulseFrameCounter);
+element('currentPulse').textContent='—';
+}
+}
+}
+if(displayDebug){
+element('processingTime').textContent=(performance.now()-processingStart).toFixed(1)+' мс';
+element('debugFps').textContent=element('fps').textContent;
+element('positiveFrames').textContent=String(positiveFrameCount);
+element('activePixels').textContent=String(activePixelCount);
+if(processedFrameCount%15===1){
+const settings=cameraTrack?.getSettings?.()||{};
+element('cameraSettings').textContent=[settings.width+'×'+settings.height,settings.frameRate?settings.frameRate+' fps':'fps ?',settings.exposureTime!==undefined?'выдержка '+settings.exposureTime:'',settings.focusDistance!==undefined?'фокус '+settings.focusDistance:''].filter(Boolean).join(' / ');
+}
 }
 }
 </script>

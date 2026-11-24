@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <wincrypt.h>
 #include <opencv2/opencv.hpp>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>

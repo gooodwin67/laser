@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <conio.h>
+#include <cstring>
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
@@ -108,8 +109,10 @@ void drawPreview(const cv::Mat& cameraFrame, const cv::Mat& detectionMask,
     SetBkMode(deviceContext, OPAQUE);
     SetBkColor(deviceContext, RGB(20, 30, 45));
     SetTextColor(deviceContext, RGB(240, 250, 255));
-    TextOutA(deviceContext, 10, 8, "CAMERA (green ring = accepted onset)", 36);
-    TextOutA(deviceContext, panelWidth + 10, 8, "MASK (white = brightness rise)", 30);
+    const char* cameraLabel = "CAMERA (green ring = accepted onset)";
+    TextOutA(deviceContext, 10, 8, cameraLabel, static_cast<int>(std::strlen(cameraLabel)));
+    const char* maskLabel = "MASK (white = brightness rise)";
+    TextOutA(deviceContext, panelWidth + 10, 8, maskLabel, static_cast<int>(std::strlen(maskLabel)));
     ReleaseDC(previewWindow, deviceContext);
 }
 
@@ -291,7 +294,7 @@ int main(int argc, char** argv) {
               << ", red-difference=" << minimumRedDifference << "\n";
 
     previewWindow = createPreviewWindow();
-    if (!previewWindow) std::cerr << "Camera preview unavailable; detection will continue.\\n";
+    if (!previewWindow) std::cerr << "Camera preview unavailable; detection will continue.\n";
 
     std::thread serverThread(websocketServer);
     serverThread.detach(); // Process lifetime; accept loop ends when the process exits.

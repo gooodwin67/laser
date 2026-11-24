@@ -17,8 +17,6 @@ canvas{display:block}#hud{position:fixed;top:14px;left:14px;right:14px;display:f
 button{border:0;border-radius:10px;padding:13px 24px;background:#23a4ed;color:#061525;font-size:17px;font-weight:750;cursor:pointer}
 #toast{position:fixed;left:50%;top:26%;transform:translate(-50%,-50%);font-weight:800;font-size:30px;text-shadow:0 3px 22px #000;pointer-events:none;opacity:0;transition:opacity .15s;z-index:3}
 #toast.visible{opacity:1}
-#crosshair{position:fixed;width:22px;height:22px;border:2px solid #a6ffbc;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:3;display:none;box-shadow:0 0 12px #31ff66}
-#crosshair:after{content:"";position:absolute;top:8px;left:8px;width:2px;height:2px;background:white}
 @media(max-width:600px){#hud{top:8px;left:8px;right:8px;gap:5px}.metric{min-width:75px;padding:6px 9px}.metric strong{font-size:19px}.panel h1{font-size:30px}}
 </style>
 </head>
@@ -30,7 +28,7 @@ button{border:0;border-radius:10px;padding:13px 24px;background:#23a4ed;color:#0
 <div class="metric"><small>Время</small><strong id="timer">60</strong></div>
 </div>
 <div id="connection">Камера: подключение к ws://127.0.0.1:8765… · Мышь тоже работает</div>
-<div id="toast"></div><div id="crosshair"></div>
+<div id="toast"></div>
 <div id="overlay"><div class="panel">
 <h1 id="panelTitle">LASER ARCADE</h1>
 <p id="panelDescription">Три движущиеся 3D-мишени. Попадай в них за 60 секунд.<br>Пока Windows-детектор собирается, играй мышью или касанием.</p>
@@ -82,6 +80,77 @@ group.add(ring);
 scene.add(group);
 targets.push({group,sphere,ring,index,flashUntil:0});
 }
+// A shot decal sits on the backdrop plane, physically behind all moving spheres.
+const impactMarker=new THREE.Group();
+const impactMaterial=new THREE.MeshBasicMaterial({
+color:0x9cffbc,transparent:true,opacity:0.85,depthTest:true,depthWrite:false
+});
+impactMarker.add(new THREE.Mesh(new THREE.RingGeometry(0.12,0.15,32),impactMaterial));
+const markerHorizontal=new THREE.Mesh(new THREE.PlaneGeometry(0.42,0.018),impactMaterial);
+const markerVertical=new THREE.Mesh(new THREE.PlaneGeometry(0.018,0.42),impactMaterial);
+impactMarker.add(markerHorizontal,markerVertical);
+impactMarker.position.z=-2.9;
+impactMarker.visible=false;
+scene.add(impactMarker);
+let impactMarkerExpiresAt=0;
+
+let audioContext=null;
+let noiseBuffer=null;
+function initializeAudio(){
+try{
+if(!audioContext){
+audioContext=new (window.AudioContext||window.webkitAudioContext)();
+const sampleRate=audioContext.sampleRate;
+noiseBuffer=audioContext.createBuffer(1,Math.round(sampleRate*0.45),sampleRate);
+const samples=noiseBuffer.getChannelData(0);
+for(let sampleIndex=0;sampleIndex<samples.length;sampleIndex++){
+samples[sampleIndex]=Math.random()*2-1;
+}
+}
+if(audioContext.state==='suspended')audioContext.resume().catch(()=>{});
+}catch(error){console.warn('Audio is unavailable',error);}
+}
+function playTone(frequency,endFrequency,duration,volume,waveform='sine',delay=0){
+if(!audioContext||audioContext.state!=='running')return;
+const startTime=audioContext.currentTime+delay;
+const oscillator=audioContext.createOscillator();
+const gain=audioContext.createGain();
+oscillator.type=waveform;
+oscillator.frequency.setValueAtTime(frequency,startTime);
+oscillator.frequency.exponentialRampToValueAtTime(Math.max(30,endFrequency),startTime+duration);
+gain.gain.setValueAtTime(Math.max(0.0001,volume),startTime);
+gain.gain.exponentialRampToValueAtTime(0.0001,startTime+duration);
+oscillator.connect(gain).connect(audioContext.destination);
+oscillator.start(startTime);
+oscillator.stop(startTime+duration+0.01);
+}
+function playNoise(duration,volume,cutoff){
+if(!audioContext||audioContext.state!=='running'||!noiseBuffer)return;
+const startTime=audioContext.currentTime;
+const source=audioContext.createBufferSource();
+source.buffer=noiseBuffer;
+const filter=audioContext.createBiquadFilter();
+filter.type='lowpass';
+filter.frequency.value=cutoff;
+const gain=audioContext.createGain();
+gain.gain.setValueAtTime(volume,startTime);
+gain.gain.exponentialRampToValueAtTime(0.0001,startTime+duration);
+source.connect(filter).connect(gain).connect(audioContext.destination);
+source.start(startTime);
+source.stop(startTime+duration);
+}
+function playShotSound(){
+playNoise(0.11,0.16,2200);
+playTone(160,52,0.13,0.16,'triangle');
+}
+function playHitSound(){
+playTone(650,1050,0.12,0.11,'sine');
+playTone(940,1320,0.16,0.07,'sine',0.045);
+}
+function playMissSound(){
+playTone(260,110,0.20,0.10,'triangle');
+playNoise(0.12,0.035,450);
+}
 const raycaster=new THREE.Raycaster();
 const pointer=new THREE.Vector2();
 let gameActive=false;
@@ -97,7 +166,7 @@ const missesElement=document.getElementById('misses');
 const timerElement=document.getElementById('timer');
 const overlayElement=document.getElementById('overlay');
 const toastElement=document.getElementById('toast');
-const crosshairElement=document.getElementById('crosshair');
+
 const statusElement=document.getElementById('connection');
 
 function refreshHud(){
@@ -130,12 +199,11 @@ if(!Number.isFinite(normalizedX)||!Number.isFinite(normalizedY)||normalizedX<0||
 pointer.set(normalizedX*2-1,1-normalizedY*2);
 raycaster.setFromCamera(pointer,camera);
 const intersection=raycaster.intersectObjects(targets.map(target=>target.sphere),false)[0];
-crosshairElement.style.left=(normalizedX*100)+'%';
-crosshairElement.style.top=(normalizedY*100)+'%';
-crosshairElement.style.display='block';
-clearTimeout(shoot.crosshairTimer);
-shoot.crosshairTimer=setTimeout(()=>crosshairElement.style.display='none',180);
+playShotSound();
 if(intersection){
+// On hit, hide the marker immediately, including one left by a previous miss.
+impactMarker.visible=false;
+playHitSound();
 const target=targets.find(item=>item.sphere===intersection.object);
 target.flashUntil=performance.now()+150;
 hits++;
@@ -143,6 +211,15 @@ score+=100;
 showToast('+100',true);
 }else{
 misses++;
+playMissSound();
+// The decal is on a real 3D plane and therefore cannot cover the spheres.
+const distanceToBackdrop=(-2.9-raycaster.ray.origin.z)/raycaster.ray.direction.z;
+if(distanceToBackdrop>0){
+const impactPosition=raycaster.ray.at(distanceToBackdrop,new THREE.Vector3());
+impactMarker.position.set(impactPosition.x,impactPosition.y,-2.9);
+impactMarker.visible=true;
+impactMarkerExpiresAt=performance.now()+180;
+}
 showToast('Промах',false);
 }
 refreshHud();
@@ -156,6 +233,8 @@ document.getElementById('playButton').textContent='Ещё раз';
 overlayElement.style.display='grid';
 }
 function startGame(){
+initializeAudio();
+impactMarker.visible=false;
 score=0;hits=0;misses=0;refreshHud();
 gameActive=true;
 gameEndsAt=performance.now()+60000;
@@ -188,6 +267,7 @@ requestAnimationFrame(animate);
 lastFrameTimestamp=timestamp;
 const seconds=timestamp/1000;
 updateTargets(seconds);
+if(impactMarker.visible&&timestamp>=impactMarkerExpiresAt)impactMarker.visible=false;
 if(gameActive){
 const remaining=Math.max(0,Math.ceil((gameEndsAt-timestamp)/1000));
 timerElement.textContent=String(remaining);

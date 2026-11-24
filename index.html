@@ -133,7 +133,7 @@ let lastCameraFrameTimestamp=0;
 let smoothedCameraFps=0;
 let droppedFrameCount=0;
 let lastPresentedFrames=null;
-let lastProcessedMediaTime=null;
+let lastPositiveMediaTime=null;
 let lastFallbackMediaTime=-1;
 let pulseStartTime=0;
 let pulseFrameCounter=0;
@@ -163,7 +163,7 @@ const thisSession=++sessionNumber;
 if(cameraStream)cameraStream.getTracks().forEach(track=>track.stop());
 cameraStream=null;cameraTrack=null;previousPixels=null;wasDetected=false;
 cameraFrameCount=0;processedFrameCount=0;positiveFrameCount=0;lastCameraFrameTimestamp=0;smoothedCameraFps=0;
-droppedFrameCount=0;lastPresentedFrames=null;lastProcessedMediaTime=null;lastFallbackMediaTime=-1;
+droppedFrameCount=0;lastPresentedFrames=null;lastPositiveMediaTime=null;lastFallbackMediaTime=-1;
 pulseStartTime=0;pulseFrameCounter=0;lastPulseStartTime=0;
 for(const item of ['cameraFrames','processedFrames','positiveFrames','droppedFrames'])element(item).textContent='0';
 for(const item of ['lastPulse','currentPulse','pulseFrames','pulseInterval','cameraFps'])element(item).textContent='—';
@@ -412,6 +412,7 @@ if(displayDebug&&lastPulseStartTime)element('pulseInterval').textContent=(frameM
 lastPulseStartTime=frameMediaTime;
 }
 pulseFrameCounter++;
+lastPositiveMediaTime=frameMediaTime;
 if(displayDebug)element('currentPulse').textContent=pulseFrameCounter===1?'1 кадр':(frameMediaTime-pulseStartTime).toFixed(0)+' мс (интервал кадров)';
 const pointX=left+(bestComponent.x+0.5)/width*displayedWidth;
 const pointY=top+(bestComponent.y+0.5)/height*displayedHeight;
@@ -432,13 +433,12 @@ element('spotSize').textContent='—';
 if(now-lastDetectedTime>130&&wasDetected){
 wasDetected=false;
 if(displayDebug){
-element('lastPulse').textContent=pulseFrameCounter===1?'1 кадр (длительность неизвестна)':(lastProcessedMediaTime-pulseStartTime).toFixed(0)+' мс (между кадрами)';
+element('lastPulse').textContent=pulseFrameCounter===1?'1 кадр (длительность неизвестна)':(lastPositiveMediaTime-pulseStartTime).toFixed(0)+' мс (между кадрами)';
 element('pulseFrames').textContent=String(pulseFrameCounter);
 element('currentPulse').textContent='—';
 }
 }
 }
-lastProcessedMediaTime=frameMediaTime;
 if(displayDebug){
 element('processingTime').textContent=(performance.now()-processingStart).toFixed(1)+' мс';
 element('debugFps').textContent=element('fps').textContent;

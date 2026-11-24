@@ -1,0 +1,50 @@
+name: Build Laser Core for Windows
+
+on:
+  push:
+    branches: [native-core]
+    paths:
+      - 'core/**'
+      - '.github/workflows/build-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP\vcpkg"
+          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" >> $env:GITHUB_ENV
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S core -B build/native -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build/native --config Release --parallel 4
+
+      - name: Package executable and DLL dependencies
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item build/native/Release/laser-core.exe package/
+          Get-ChildItem "$env:VCPKG_ROOT/installed/x64-windows/bin" -Filter *.dll | Copy-Item -Destination package/
+          Copy-Item NATIVE-CORE.md package/README.md
+
+      - name: Upload Windows ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: laser-core-windows-x64
+          path: package/
+          retention-days: 14

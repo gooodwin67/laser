@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Laser Core + Three.js demo</title>
+<style>
+html,body{margin:0;overflow:hidden;background:#101725;font:16px system-ui;color:white}
+#status{position:fixed;top:12px;left:12px;background:#000a;padding:12px;border-radius:8px;z-index:2}
+#score{position:fixed;top:12px;right:12px;background:#000a;padding:12px;border-radius:8px;z-index:2}
+small{display:block;font-size:12px;color:#adbad0;margin-top:6px}
+</style>
+</head>
+<body>
+<div id="status">Подключение к Laser Core…<small>Для теста можно кликать мышью</small></div>
+<div id="score">Попаданий: 0</div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.181.0/build/three.module.js';
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x101725);
+const camera=new THREE.PerspectiveCamera(45,window.innerWidth/window.innerHeight,0.1,100);
+camera.position.z=8;
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth,window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const ball=new THREE.Mesh(
+new THREE.SphereGeometry(0.75,48,32),
+new THREE.MeshStandardMaterial({color:0x4aa3ff,roughness:0.32,metalness:0.1})
+);
+scene.add(ball);
+scene.add(new THREE.HemisphereLight(0xffffff,0x18294a,2.5));
+const light=new THREE.DirectionalLight(0xffffff,2.2);
+light.position.set(2,3,5);
+scene.add(light);
+const raycaster=new THREE.Raycaster();
+let hitCount=0;
+const statusElement=document.getElementById('status');
+const scoreElement=document.getElementById('score');
+
+function checkShot(normalizedX,normalizedY){
+const position=new THREE.Vector2(normalizedX*2-1,1-normalizedY*2);
+raycaster.setFromCamera(position,camera);
+if(raycaster.intersectObject(ball).length){
+hitCount++;
+scoreElement.textContent='Попаданий: '+hitCount;
+ball.material.color.set(0xff9050);
+setTimeout(()=>ball.material.color.set(0x4aa3ff),120);
+}
+}
+const socket=new WebSocket('ws://127.0.0.1:8765');
+socket.onopen=()=>statusElement.firstChild.textContent='Laser Core подключён';
+socket.onclose=()=>statusElement.firstChild.textContent='Нет соединения с Laser Core';
+socket.onerror=()=>statusElement.firstChild.textContent='Ошибка WebSocket';
+socket.onmessage=event=>{
+try{
+const shot=JSON.parse(event.data);
+if(shot.type==='shot'&&Number.isFinite(shot.x)&&Number.isFinite(shot.y)){
+checkShot(shot.x,shot.y);
+}
+}catch(error){console.warn('Bad shot event',error);}
+};
+renderer.domElement.addEventListener('pointerdown',event=>{
+checkShot(event.clientX/window.innerWidth,event.clientY/window.innerHeight);
+});
+window.addEventListener('resize',()=>{
+camera.aspect=window.innerWidth/window.innerHeight;
+camera.updateProjectionMatrix();
+renderer.setSize(window.innerWidth,window.innerHeight);
+});
+const clock=new THREE.Clock();
+function animate(){
+requestAnimationFrame(animate);
+ball.position.x=Math.sin(clock.getElapsedTime()*1.4)*2.2;
+ball.rotation.y+=0.01;
+renderer.render(scene,camera);
+}
+animate();
+</script>
+</body>
+</html>

@@ -25,6 +25,19 @@ jobs:
           & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
           "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" >> $env:GITHUB_ENV
 
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: .vcpkg-binary-cache
+          key: vcpkg-windows-2022-x64-${{ hashFiles('core/vcpkg.json') }}-v1
+
+      - name: Enable vcpkg binary caching
+        shell: pwsh
+        run: |
+          $cacheDirectory = Join-Path $env:GITHUB_WORKSPACE ".vcpkg-binary-cache"
+          New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
+          "VCPKG_DEFAULT_BINARY_CACHE=$cacheDirectory" >> $env:GITHUB_ENV
+
       - name: Configure
         shell: pwsh
         run: |

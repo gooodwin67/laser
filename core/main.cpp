@@ -393,7 +393,7 @@ int main(int argc, char** argv) {
               << camera.get(cv::CAP_PROP_FRAME_WIDTH) << "x"
               << camera.get(cv::CAP_PROP_FRAME_HEIGHT) << " at "
               << camera.get(cv::CAP_PROP_FPS) << " fps (driver-reported)\n";
-    std::cout << "Detector: minimum red=" << minimumBrightness
+    std::cout << "Detector: minimum red=" << initialBrightness
               << ", red-difference=" << initialRedDifference << "\n";
 
     previewWindow = createPreviewWindow();

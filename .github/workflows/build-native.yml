@@ -39,7 +39,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path package | Out-Null
           Copy-Item build/native/Release/laser-core.exe package/
-          Get-ChildItem "$env:VCPKG_ROOT/installed/x64-windows/bin" -Filter *.dll | Copy-Item -Destination package/
+          Get-ChildItem "build/native/Release" -Filter *.dll | Copy-Item -Destination package/
           Copy-Item NATIVE-CORE.md package/README.md
 
       - name: Upload Windows ZIP

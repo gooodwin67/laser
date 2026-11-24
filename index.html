@@ -57,6 +57,11 @@ hr{border:0;border-top:1px solid #2c3d50;margin:17px 0}
 <hr>
 <h2>Настройки камеры</h2>
 <p id="exposureStatus" class="hint">После включения проверим поддержку ручной экспозиции.</p>
+<p id="focusStatus" class="hint">Проверим, доступна ли настройка фокуса.</p>
+<div id="focusControls" style="display:none">
+<button id="autoFocus">Автофокус</button><button id="manualFocus">Зафиксировать фокус</button>
+<label>Фокус: <b id="focusValue">—</b><input id="focusDistance" type="range"></label>
+</div>
 <div id="exposureControls">
 <button id="autoExposure">Автоэкспозиция</button>
 <button id="manualExposure">Ручная экспозиция</button>
@@ -90,6 +95,8 @@ let visited=null;
 let queue=null;
 let exposureCapabilities=null;
 let exposureSupported=false;
+let focusSupported=false;
+let focusCapabilities=null;
 function connectRange(inputName,valueName){
 const input=element(inputName);
 input.addEventListener('input',()=>element(valueName).textContent=input.value);
@@ -118,9 +125,46 @@ video.srcObject=stream;await video.play();
 element('status').textContent='Камера работает: '+video.videoWidth+'×'+video.videoHeight;
 lastFrameTime=performance.now();
 inspectExposure();
+inspectFocus();
 requestAnimationFrame(time=>processFrame(time,thisSession));
 }catch(error){element('status').textContent='Ошибка: '+error.message;}
 }
+async function inspectFocus(){
+try {
+focusCapabilities=cameraTrack?.getCapabilities?.();
+const supportedModes=focusCapabilities?.focusMode||[];
+const focusRange=focusCapabilities?.focusDistance;
+focusSupported=supportedModes.includes('manual');
+if(!focusSupported){
+element('focusStatus').textContent='Ручной фокус не предоставляется браузеру этой камерой. Настройте его в драйвере Windows или программе производителя.';
+return;
+}
+element('focusControls').style.display='block';
+const focusSlider=element('focusDistance');
+if(focusRange&&Number.isFinite(focusRange.min)&&Number.isFinite(focusRange.max)){
+focusSlider.min=String(focusRange.min);
+focusSlider.max=String(focusRange.max);
+focusSlider.step=String(focusRange.step||Math.max((focusRange.max-focusRange.min)/100,0.001));
+focusSlider.value=String(cameraTrack.getSettings?.().focusDistance??focusRange.min);
+element('focusValue').textContent=focusSlider.value;
+}else {
+focusSlider.style.display='none';
+}
+element('focusStatus').textContent='Камера поддерживает ручной фокус. Зафиксируйте его и проверьте резкость стены.';
+}catch(error){element('focusStatus').textContent='Настройки фокуса недоступны: '+error.message;}
+}
+async function setFocusMode(mode){
+if(!cameraTrack||!focusSupported)return;
+try{
+const constraints={focusMode:mode};
+if(mode==='manual'&&focusCapabilities?.focusDistance)constraints.focusDistance=Number(element('focusDistance').value);
+await cameraTrack.applyConstraints({advanced:[constraints]});
+element('focusStatus').textContent='Режим фокуса: '+(mode==='manual'?'ручной':'автоматический');
+}catch(error){element('focusStatus').textContent='Ошибка изменения фокуса: '+error.message;}
+}
+element('autoFocus').onclick=()=>setFocusMode('continuous');
+element('manualFocus').onclick=()=>setFocusMode('manual');
+element('focusDistance').onchange=()=>setFocusMode('manual');
 async function inspectExposure(){
 try{
 exposureCapabilities=cameraTrack?.getCapabilities?.();

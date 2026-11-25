@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Laser Lab — Web Camera Control</title>
+<style>
+:root{font:14px system-ui,Arial,sans-serif;color:#e8f2ff;color-scheme:dark}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#05080e}
+#camera,#overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}#camera{background:#020409}#overlay{pointer-events:auto;cursor:crosshair}
+#camera.hidden{opacity:0}#mask{display:none}
+#toolbar{position:fixed;top:12px;left:12px;right:12px;display:flex;gap:7px;flex-wrap:wrap;z-index:2;pointer-events:none}
+button{font:inherit;background:#182a3bea;color:#effaff;border:1px solid #43617b;border-radius:9px;padding:9px 13px;cursor:pointer;pointer-events:auto}
+button:hover{background:#29445c}button.active{border-color:#50c9ff;background:#1a4d64}
+#toolbar button:first-child{background:#0874be}#status{align-self:center;padding:8px 12px;background:#081523dc;border-radius:9px;color:#b7d4e8;pointer-events:none}
+#panel{position:fixed;top:61px;right:12px;bottom:12px;width:min(380px,calc(100vw - 24px));overflow:auto;background:#101e2af5;border:1px solid #43617b;border-radius:12px;padding:15px;z-index:4;box-shadow:0 18px 60px #0009}
+#panel[hidden]{display:none}h2{margin:1px 0 12px;font-size:20px}h3{font-size:14px;margin:18px 0 10px}p{color:#a7bed1;font-size:12px;line-height:1.55}
+label{display:block;margin:14px 0;font-weight:600}label small{display:block;font-size:11px;color:#a9bed1;line-height:1.4;font-weight:400;margin:3px 0 7px}
+input[type=range]{width:100%;accent-color:#3dbaff}select,input[type=text]{width:100%;background:#091522;color:#fff;border:1px solid #435c70;border-radius:7px;padding:9px}
+.inline{display:flex;gap:6px;flex-wrap:wrap}.inline button{flex:1}
+#footer{position:fixed;bottom:12px;left:12px;max-width:70%;background:#081523df;border-radius:10px;padding:10px 12px;font:12px monospace;white-space:pre-line;z-index:2;pointer-events:none}
+#hint{position:fixed;top:70px;left:50%;transform:translateX(-50%);background:#061526e9;padding:12px 18px;border:1px solid #3d91c2;border-radius:10px;z-index:2;display:none;text-align:center}
+#hint.visible{display:block}
+</style>
+</head>
+<body>
+<video id="camera" autoplay playsinline muted></video><canvas id="overlay"></canvas><canvas id="mask"></canvas>
+<div id="toolbar"><button id="cameraButton">▶ Камера</button><button data-menu="presets">Пресеты</button><button data-menu="settings">Настройки</button><button data-menu="calibration">Калибровка</button><button data-menu="zeroing">Пристрелка</button><button id="showMask">Маска</button><span id="status">Камера выключена</span></div>
+<section id="panel" hidden><h2 id="panelTitle"></h2><div id="panelContent"></div></section>
+<div id="hint"></div><div id="footer">Кадры: — | Обработка: — | Выстрелов: 0</div>
+<script type="module">
+const video=document.getElementById('camera');
+const overlay=document.getElementById('overlay');
+const context=overlay.getContext('2d');
+const maskCanvas=document.getElementById('mask');
+const maskContext=maskCanvas.getContext('2d',{willReadFrequently:true});
+const statusElement=document.getElementById('status');
+const footer=document.getElementById('footer');
+const hint=document.getElementById('hint');
+const panel=document.getElementById('panel');
+const panelTitle=document.getElementById('panelTitle');
+const panelContent=document.getElementById('panelContent');
+const storageKey='laser-lab-web-v1';
+const defaults={width:640,height:480,frameRate:30,analysisWidth:320,brightness:190,redExcess:45,redChange:28,spotPixels:3,maxSpotPixels:160,debounce:220,mode:'red',mask:false,offsetX:0,offsetY:0,corners:[],presets:[]};
+let config={...defaults};
+try{const stored=JSON.parse(localStorage.getItem(storageKey)||'{}');config={...defaults,...stored};}catch{}
+const readyPresets=[
+{name:'Красный фильтр (базовый)',brightness:141,redExcess:90,redChange:30,spotPixels:2,mode:'red',analysisWidth:320},
+{name:'Тёмная комната',brightness:205,redExcess:40,redChange:20,spotPixels:2,mode:'bright',analysisWidth:320},
+{name:'Чувствительный тест',brightness:135,redExcess:40,redChange:16,spotPixels:1,mode:'red',analysisWidth:640}
+];
+let cameraStream=null,cameraTrack=null,previousRed=null;
+let running=false,runToken=0,frameCounter=0,processedCounter=0,shots=0;
+let framesStart=performance.now(),processedStart=performance.now(),cameraFps=0,processedFps=0;
+let lastShotTime=-Infinity,lastShot=null,activePanel='',calibrationStage=-1,zeroingStage=0,showMask=config.mask;
+let lastFrameMediaTime=-1;
+const save=()=>localStorage.setItem(storageKey,JSON.stringify(config));
+const clamp=(value,low,high)=>Math.max(low,Math.min(high,value));
+const percent=value=>(value*100).toFixed(1)+'%';
+function displayHint(message){hint.textContent=message;hint.classList.add('visible')}
+function clearHint(){hint.classList.remove('visible')}
+function geometry(){
+const width=overlay.width=window.innerWidth;
+const height=overlay.height=window.innerHeight;
+const videoWidth=video.videoWidth||config.width;
+const videoHeight=video.videoHeight||config.height;
+const scale=Math.min(width/videoWidth,height/videoHeight);
+const displayWidth=videoWidth*scale;
+const displayHeight=videoHeight*scale;
+return {width,height,videoWidth,videoHeight,displayWidth,displayHeight,left:(width-displayWidth)/2,top:(height-displayHeight)/2};
+}
+function screenToRaw(clientX,clientY){
+const rect=geometry();
+const x=(clientX-rect.left)/rect.displayWidth;
+const y=(clientY-rect.top)/rect.displayHeight;
+if(x<0||x>1||y<0||y>1)return null;
+return {x,y};
+}
+function rawToScreen(point){
+const rect=geometry();
+return {x:rect.left+point.x*rect.displayWidth,y:rect.top+point.y*rect.displayHeight};
+}
+function solveLinearSystem(matrix,vector){
+const order=vector.length;
+const rows=matrix.map((row,index)=>[...row,vector[index]]);
+for(let pivot=0;pivot<order;pivot++){
+let pivotRow=pivot;
+for(let row=pivot+1;row<order;row++)if(Math.abs(rows[row][pivot])>Math.abs(rows[pivotRow][pivot]))pivotRow=row;
+if(Math.abs(rows[pivotRow][pivot])<1e-10)return null;
+[rows[pivot],rows[pivotRow]]=[rows[pivotRow],rows[pivot]];
+const value=rows[pivot][pivot];
+for(let column=pivot;column<=order;column++)rows[pivot][column]/=value;
+for(let row=0;row<order;row++){
+if(row===pivot)continue;
+const multiple=rows[row][pivot];
+for(let column=pivot;column<=order;column++)rows[row][column]-=multiple*rows[pivot][column];
+}
+}
+return rows.map(row=>row[order]);
+}
+function homography(corners){
+if(corners.length!==4)return null;
+const destination=[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}];
+const matrix=[],vector=[];
+for(let index=0;index<4;index++){
+const {x,y}=corners[index];
+const {x:targetX,y:targetY}=destination[index];
+matrix.push([x,y,1,0,0,0,-targetX*x,-targetX*y]);vector.push(targetX);
+matrix.push([0,0,0,x,y,1,-targetY*x,-targetY*y]);vector.push(targetY);
+}
+return solveLinearSystem(matrix,vector);
+}
+function mapPoint(raw){
+const transform=homography(config.corners);
+if(!transform)return {x:raw.x+config.offsetX,y:raw.y+config.offsetY};
+const denominator=transform[6]*raw.x+transform[7]*raw.y+1;
+if(Math.abs(denominator)<1e-8)return null;
+return {x:(transform[0]*raw.x+transform[1]*raw.y+transform[2])/denominator+config.offsetX,
+y:(transform[3]*raw.x+transform[4]*raw.y+transform[5])/denominator+config.offsetY};
+}
+function renderOverlay(){
+const viewport=geometry();
+context.clearRect(0,0,viewport.width,viewport.height);
+if(calibrationStage>=0 || (activePanel==='calibration'&&config.corners.length===4)){
+const points=config.corners.map(rawToScreen);
+if(points.length){
+context.strokeStyle='#5ce4ff';context.fillStyle='#5ce4ff';context.lineWidth=3;
+context.beginPath();context.moveTo(points[0].x,points[0].y);
+for(let index=1;index<points.length;index++)context.lineTo(points[index].x,points[index].y);
+if(points.length===4)context.closePath();
+context.stroke();
+points.forEach((point,index)=>{context.beginPath();context.arc(point.x,point.y,7,0,Math.PI*2);context.fill();context.fillText(String(index+1),point.x+12,point.y-10);});
+}
+}
+if(lastShot&&performance.now()-lastShot.time<700){
+const point=rawToScreen(lastShot.raw);
+context.beginPath();context.strokeStyle=lastShot.accepted?'#62ff9a':'#ff637a';context.lineWidth=3;
+context.arc(point.x,point.y,13,0,Math.PI*2);context.stroke();
+}
+}
+function showFooter(){
+const point=lastShot?.mapped;
+footer.textContent='Камера: '+cameraFps.toFixed(1)+' FPS | Анализ: '+processedFps.toFixed(1)+' FPS | Выстрелов: '+shots+
+'\nПоследний: '+(point?percent(point.x)+' × '+percent(point.y):'—')+
+' | Отступ: '+config.offsetX.toFixed(4)+' / '+config.offsetY.toFixed(4);
+}
+function processImage(timestamp){
+if(!running||video.readyState<2)return;
+const processingWidth=config.analysisWidth;
+const processingHeight=Math.max(1,Math.round(processingWidth*video.videoHeight/video.videoWidth));
+if(maskCanvas.width!==processingWidth||maskCanvas.height!==processingHeight){
+maskCanvas.width=processingWidth;maskCanvas.height=processingHeight;previousRed=null;
+}
+maskContext.drawImage(video,0,0,processingWidth,processingHeight);
+let pixels;
+try{pixels=maskContext.getImageData(0,0,processingWidth,processingHeight).data;}
+catch{return;}
+const pixelCount=processingWidth*processingHeight;
+const currentRed=new Uint8Array(pixelCount);
+const activeMask=new Uint8Array(pixelCount);
+for(let index=0;index<pixelCount;index++){
+const pixelIndex=index*4;
+const red=pixels[pixelIndex],green=pixels[pixelIndex+1],blue=pixels[pixelIndex+2];
+currentRed[index]=red;
+const hasColor=config.mode==='bright'?Math.max(red,green,blue)>=config.brightness:
+red>=config.brightness&&red-Math.max(green,blue)>=config.redExcess;
+const changed=!previousRed||red-previousRed[index]>=config.redChange;
+if(hasColor&&changed)activeMask[index]=1;
+}
+previousRed=currentRed;
+const visited=new Uint8Array(pixelCount);
+let best=null;
+const stack=new Int32Array(pixelCount);
+for(let index=0;index<pixelCount;index++){
+if(!activeMask[index]||visited[index])continue;
+let count=0,sumX=0,sumY=0,stackSize=1;stack[0]=index;visited[index]=1;
+while(stackSize){
+const pixel=stack[--stackSize],x=pixel%processingWidth,y=Math.floor(pixel/processingWidth);
+count++;sumX+=x;sumY+=y;
+for(let row=-1;row<=1;row++)for(let column=-1;column<=1;column++){
+if(!row&&!column)continue;
+const nextX=x+column,nextY=y+row;
+if(nextX<0||nextX>=processingWidth||nextY<0||nextY>=processingHeight)continue;
+const neighbour=nextY*processingWidth+nextX;
+if(activeMask[neighbour]&&!visited[neighbour]){
+visited[neighbour]=1;stack[stackSize++]=neighbour;
+}
+}
+}
+if(count>=config.spotPixels&&count<=config.maxSpotPixels&&(!best||count>best.count))best={count,x:sumX/count,y:sumY/count};
+}
+if(best&&timestamp-lastShotTime>=config.debounce){
+lastShotTime=timestamp;shots++;
+const raw={x:(best.x+0.5)/processingWidth,y:(best.y+0.5)/processingHeight};
+const mapped=mapPoint(raw);
+lastShot={raw,mapped,time:performance.now(),accepted:true};
+if(zeroingStage===1){displayHint('Выстрел захвачен. Теперь щёлкни мышью по точке, куда целился.');zeroingStage=2;}
+}
+if(showMask){
+const output=maskContext.createImageData(processingWidth,processingHeight);
+for(let index=0;index<pixelCount;index++){
+const value=activeMask[index]?255:0;
+output.data[index*4]=value;output.data[index*4+1]=value;output.data[index*4+2]=value;output.data[index*4+3]=255;
+}
+maskContext.putImageData(output,0,0);
+const image=maskCanvas.toDataURL('image/png');
+video.style.opacity='0';
+overlay.style.backgroundImage='url('+image+')';
+overlay.style.backgroundSize='contain';
+overlay.style.backgroundPosition='center';
+overlay.style.backgroundRepeat='no-repeat';
+}else{video.style.opacity='1';overlay.style.backgroundImage='none';}
+processedCounter++;
+if(timestamp-processedStart>1000){processedFps=processedCounter*1000/(timestamp-processedStart);processedCounter=0;processedStart=timestamp;}
+showFooter();
+}
+function onVideoFrame(timestamp,metadata,token){
+if(!running||token!==runToken)return;
+frameCounter++;
+if(timestamp-framesStart>1000){cameraFps=frameCounter*1000/(timestamp-framesStart);frameCounter=0;framesStart=timestamp;}
+processImage(timestamp);
+if(video.requestVideoFrameCallback)video.requestVideoFrameCallback((nextTimestamp,nextMetadata)=>onVideoFrame(nextTimestamp,nextMetadata,token));
+}
+function fallbackFrame(timestamp,token){
+if(!running||runToken!==token)return;
+requestAnimationFrame(nextTimestamp=>fallbackFrame(nextTimestamp,token));
+if(video.currentTime===lastFrameMediaTime)return;
+lastFrameMediaTime=video.currentTime;
+onVideoFrameFallback(timestamp);
+}
+function onVideoFrameFallback(timestamp){cameraFps=processedFps;processImage(timestamp);}
+async function startCamera(){
+await stopCamera();
+try{
+const constraints={audio:false,video:{width:{ideal:config.width},height:{ideal:config.height},frameRate:{ideal:config.frameRate},facingMode:'environment'}};
+cameraStream=await navigator.mediaDevices.getUserMedia(constraints);
+cameraTrack=cameraStream.getVideoTracks()[0];
+video.srcObject=cameraStream;
+await video.play();
+running=true;runToken++;previousRed=null;lastFrameMediaTime=-1;
+framesStart=performance.now();processedStart=framesStart;frameCounter=processedCounter=0;
+const settings=cameraTrack.getSettings();
+statusElement.textContent=settings.width+'×'+settings.height+' / '+(settings.frameRate||'?')+' FPS';
+document.getElementById('cameraButton').textContent='■ Стоп';
+if(video.requestVideoFrameCallback)video.requestVideoFrameCallback((timestamp,metadata)=>onVideoFrame(timestamp,metadata,runToken));
+else requestAnimationFrame(timestamp=>fallbackFrame(timestamp,runToken));
+}catch(error){statusElement.textContent='Ошибка: '+error.message;}
+}
+async function stopCamera(){
+running=false;runToken++;
+if(cameraStream){cameraStream.getTracks().forEach(track=>track.stop());cameraStream=null;}
+cameraTrack=null;video.srcObject=null;
+document.getElementById('cameraButton').textContent='▶ Камера';
+statusElement.textContent='Камера выключена';
+}
+document.getElementById('cameraButton').onclick=()=>running?stopCamera():startCamera();
+document.getElementById('showMask').onclick=event=>{showMask=!showMask;config.mask=showMask;save();event.currentTarget.classList.toggle('active',showMask);};
+function setting(label,key,min,max,step,description){
+return '<label>'+label+' <b data-value="'+key+'">'+config[key]+'</b><small>'+description+'</small><input type="range" data-key="'+key+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+config[key]+'"></label>';
+}
+function selectSetting(label,key,options,description){
+return '<label>'+label+'<small>'+description+'</small><select data-key="'+key+'">'+options.map(option=>'<option value="'+option.value+'" '+(config[key]==option.value?'selected':'')+'>'+option.name+'</option>').join('')+'</select></label>';
+}
+function openPanel(name){
+if(activePanel===name){activePanel='';panel.hidden=true;clearHint();return;}
+activePanel=name;panel.hidden=false;
+document.querySelectorAll('[data-menu]').forEach(button=>button.classList.toggle('active',button.dataset.menu===name));
+const titles={presets:'Пресеты',settings:'Настройки камеры и детектора',calibration:'Калибровка проекции',zeroing:'Пристрелка / офсет'};
+panelTitle.textContent=titles[name];
+if(name==='settings'){
+panelContent.innerHTML=
+selectSetting('Режим обнаружения','mode',[{name:'Красный лазер',value:'red'},{name:'Яркая точка',value:'bright'}],'Цветовой режим детектора. Яркий режим удобен на затемнённом изображении.')+
+selectSetting('Захват: ширина','width',[{name:'640',value:640},{name:'1280',value:1280},{name:'1920',value:1920}],'Это разрешение самой камеры, не анализа. Для изменения перезапусти камеру.')+
+selectSetting('Захват: высота','height',[{name:'480',value:480},{name:'720',value:720},{name:'1080',value:1080}],'Камера выберет ближайший доступный режим.')+
+selectSetting('Желаемый FPS','frameRate',[{name:'30',value:30},{name:'60',value:60},{name:'120',value:120}],'Фактический FPS зависит от оборудования.')+
+selectSetting('Ширина анализа','analysisWidth',[{name:'320',value:320},{name:'640',value:640},{name:'960',value:960}],'Больше деталей, но медленнее анализ.')+
+setting('Яркость','brightness',0,255,1,'Минимальная яркость красного канала в пикселе.')+
+setting('Преобладание красного','redExcess',0,160,1,'Насколько красный должен быть ярче других цветов.')+
+setting('Рост красного между кадрами','redChange',0,120,1,'Отсекает постоянные красные объекты, но может пропустить слабые импульсы.')+
+setting('Минимум пикселей','spotPixels',1,40,1,'Фильтр одиночных шумовых пикселей. 1 — максимально чувствительно.')+
+setting('Максимум пикселей','maxSpotPixels',10,800,1,'Не считать большие изменения освещения лазером.')+
+setting('Интервал выстрелов, мс','debounce',0,1000,10,'Минимальная задержка между событиями.')+
+'<h3>Аппаратные параметры</h3><p id="cameraCapabilities">Включи камеру, чтобы посмотреть доступные параметры.</p><div id="deviceControls"></div><button id="restartCamera">Применить режим камеры</button>';
+document.getElementById('restartCamera').onclick=startCamera;
+renderDeviceControls();
+}else if(name==='presets'){
+panelContent.innerHTML='<p>Пресеты сохраняются только в этом браузере. Тестовые значения не гарантируют работу на другой камере.</p>'+
+[...readyPresets,...config.presets].map((preset,index)=>'<button style="display:block;width:100%;margin:7px 0" data-preset="'+index+'">'+preset.name+'</button>').join('')+
+'<h3>Сохранить текущие настройки</h3><input id="presetName" type="text" placeholder="Например, камера ДОСААФ"><button id="savePreset" style="margin-top:8px">Сохранить пресет</button>';
+document.getElementById('savePreset').onclick=()=>{
+const name=document.getElementById('presetName').value.trim();
+if(!name)return;
+const {presets,corners,offsetX,offsetY,...settings}=config;
+config.presets.push({...settings,name});save();openPanel('presets');openPanel('presets');
+};
+panelContent.querySelectorAll('[data-preset]').forEach(button=>button.onclick=()=>{
+const preset=[...readyPresets,...config.presets][Number(button.dataset.preset)];
+const {name,...settings}=preset;Object.assign(config,settings);save();openPanel('settings');
+});
+}else if(name==='calibration'){
+panelContent.innerHTML='<p>Камера должна видеть всю проекцию. Нажми «Указать 4 угла», затем щёлкни по углам экрана на изображении камеры: верхний левый → верхний правый → нижний правый → нижний левый. Вычислим перспективное преобразование.</p><div class="inline"><button id="calibrate">Указать 4 угла</button><button id="clearCalibration">Сбросить</button></div><p id="calibrationStatus">'+(config.corners.length===4?'Калибровка сохранена.':'Не откалибровано')+'</p>';
+document.getElementById('calibrate').onclick=()=>{config.corners=[];calibrationStage=0;displayHint('Укажи мышью верхний левый угол проекции (1/4)');panel.hidden=true;};
+document.getElementById('clearCalibration').onclick=()=>{config.corners=[];calibrationStage=-1;save();openPanel('settings');openPanel('calibration');};
+}else if(name==='zeroing'){
+panelContent.innerHTML='<p>После калибровки сделай один лазерный выстрел в известную точку. Затем мышью укажи, куда целился. Поправка применяется ко всем последующим координатам.</p><div class="inline"><button id="startZeroing">Пристрелять</button><button id="resetZeroing">Сбросить офсет</button></div><p>Офсет X: '+config.offsetX.toFixed(4)+' | Y: '+config.offsetY.toFixed(4)+'</p>'+
+setting('Офсет X','offsetX',-0.5,0.5,0.001,'Поправка по горизонтали в долях ширины игрового экрана.')+
+setting('Офсет Y','offsetY',-0.5,0.5,0.001,'Поправка по вертикали в долях высоты игрового экрана.');
+document.getElementById('startZeroing').onclick=()=>{zeroingStage=1;panel.hidden=true;displayHint('Выстрели лазером в выбранную точку, затем укажи её мышью.');};
+document.getElementById('resetZeroing').onclick=()=>{config.offsetX=0;config.offsetY=0;save();openPanel('settings');openPanel('zeroing');};
+}
+panelContent.querySelectorAll('[data-key]').forEach(element=>element.addEventListener('input',()=>{
+const key=element.dataset.key;
+const value=element.type==='range'||key==='width'||key==='height'||key==='analysisWidth'||key==='frameRate'?Number(element.value):element.value;
+config[key]=value;
+const valueLabel=panelContent.querySelector('[data-value="'+key+'"]');
+if(valueLabel)valueLabel.textContent=String(value);
+save();
+}));
+}
+document.querySelectorAll('[data-menu]').forEach(button=>button.onclick=()=>openPanel(button.dataset.menu));
+async function renderDeviceControls(){
+const target=document.getElementById('deviceControls');
+const label=document.getElementById('cameraCapabilities');
+if(!target||!cameraTrack)return;
+const capabilities=cameraTrack.getCapabilities?.()||{};
+const settings=cameraTrack.getSettings?.()||{};
+label.textContent='Фактически: '+JSON.stringify({width:settings.width,height:settings.height,frameRate:settings.frameRate,focusMode:settings.focusMode,exposureMode:settings.exposureMode,focusDistance:settings.focusDistance,exposureTime:settings.exposureTime});
+for(const [property,title] of [['focusDistance','Фокус'],['exposureTime','Выдержка']]){
+const range=capabilities[property];
+if(!range||!Number.isFinite(range.min)||!Number.isFinite(range.max))continue;
+const wrapper=document.createElement('label');
+wrapper.textContent=title+' ('+range.min+'…'+range.max+')';
+const control=document.createElement('input');
+control.type='range';control.min=range.min;control.max=range.max;
+control.step=range.step||0.001;control.value=settings[property]??range.min;
+const modes=capabilities[property==='focusDistance'?'focusMode':'exposureMode']||[];
+if(!modes.includes('manual')){control.disabled=true;wrapper.title='Ручной режим недоступен';}
+control.onchange=async()=>{
+const constraints=property==='focusDistance'?
+{focusMode:'manual',focusDistance:Number(control.value)}:
+{exposureMode:'manual',exposureTime:Number(control.value)};
+try{await cameraTrack.applyConstraints({advanced:[constraints]});label.textContent='Запрошено '+title+': '+control.value+'; фактически: '+cameraTrack.getSettings()[property];}
+catch(error){label.textContent='Драйвер отклонил настройку: '+error.message;}
+};
+wrapper.appendChild(control);target.appendChild(wrapper);
+}
+}
+overlay.addEventListener('pointerdown',event=>{
+const raw=screenToRaw(event.clientX,event.clientY);
+if(!raw)return;
+if(calibrationStage>=0){
+config.corners.push(raw);calibrationStage++;
+const names=['верхний левый','верхний правый','нижний правый','нижний левый'];
+if(calibrationStage===4){
+if(!homography(config.corners)){config.corners=[];displayHint('Ошибка: углы не образуют правильную проекцию. Повтори калибровку.');}
+else{save();clearHint();}calibrationStage=-1;panel.hidden=false;openPanel('settings');openPanel('calibration');
+}else displayHint('Укажи '+names[calibrationStage]+' угол проекции ('+(calibrationStage+1)+'/4)');
+}else if(zeroingStage===2&&lastShot){
+const expected=mapPoint(raw),actual=lastShot.mapped;
+if(expected&&actual){
+config.offsetX+=expected.x-actual.x;
+config.offsetY+=expected.y-actual.y;
+save();displayHint('Пристрелка сохранена: '+config.offsetX.toFixed(3)+' / '+config.offsetY.toFixed(3));
+}
+zeroingStage=0;panel.hidden=false;openPanel('settings');openPanel('zeroing');
+}
+renderOverlay();
+});
+function animate(){requestAnimationFrame(animate);renderOverlay();}
+requestAnimationFrame(animate);
+window.addEventListener('resize',renderOverlay);
+document.getElementById('showMask').classList.toggle('active',showMask);
+</script>
+</body></html>

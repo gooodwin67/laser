@@ -6,6 +6,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <windowsx.h>
 #include <commctrl.h>
 #include <wincrypt.h>
 #include <opencv2/opencv.hpp>
@@ -355,36 +356,69 @@ void drawPreview(const cv::Mat& cameraFrame, const cv::Mat& detectionMask,
     cv::cvtColor(cameraDisplay, cameraPixels, cv::COLOR_BGR2BGRA);
     cv::cvtColor(maskDisplay, maskPixels, cv::COLOR_BGR2BGRA);
 
-    RECT clientRect = {};
-    GetClientRect(previewWindow, &clientRect);
-    const int totalWidth = clientRect.right - clientRect.left;
-    const int totalHeight = clientRect.bottom - clientRect.top;
-    if (totalWidth <= 40 || totalHeight <= 40) return;
-    const int panelWidth = totalWidth / 2;
-    const int panelHeight = std::max(50,totalHeight - 285);
-    BITMAPINFO bitmapInfo = {};
-    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bitmapInfo.bmiHeader.biWidth = cameraPixels.cols;
-    bitmapInfo.bmiHeader.biHeight = -cameraPixels.rows; // OpenCV top-down order
-    bitmapInfo.bmiHeader.biPlanes = 1;
-    bitmapInfo.bmiHeader.biBitCount = 32;
-    bitmapInfo.bmiHeader.biCompression = BI_RGB;
-    HDC deviceContext = GetDC(previewWindow);
-    if (!deviceContext) return;
-    SetStretchBltMode(deviceContext, HALFTONE);
-    StretchDIBits(deviceContext, 0, 30, panelWidth, panelHeight,
-        0, 0, cameraPixels.cols, cameraPixels.rows,
-        cameraPixels.data, &bitmapInfo, DIB_RGB_COLORS, SRCCOPY);
-    StretchDIBits(deviceContext, panelWidth, 30, totalWidth - panelWidth, panelHeight,
-        0, 0, maskPixels.cols, maskPixels.rows,
-        maskPixels.data, &bitmapInfo, DIB_RGB_COLORS, SRCCOPY);
-    SetBkMode(deviceContext, OPAQUE);
-    SetBkColor(deviceContext, RGB(20, 30, 45));
-    SetTextColor(deviceContext, RGB(240, 250, 255));
-    const char* cameraLabel = "CAMERA (green ring = accepted onset)";
-    TextOutA(deviceContext, 10, 8, cameraLabel, static_cast<int>(std::strlen(cameraLabel)));
-    const char* maskLabel = "MASK (white = brightness rise)";
-    TextOutA(deviceContext, panelWidth + 10, 8, maskLabel, static_cast<int>(std::strlen(maskLabel)));
+    RECT clientRect={};
+    GetClientRect(previewWindow,&clientRect);
+    const int width=clientRect.right,height=clientRect.bottom;
+    if(width<=0||height<=50)return;
+    const int drawingWidth=width-(activePanel==NoPanel?0:368);
+    const int drawingHeight=height-49;
+    if(drawingWidth<=0||drawingHeight<=0)return;
+    const double scale=std::min(static_cast<double>(drawingWidth)/cameraPixels.cols,
+        static_cast<double>(drawingHeight)/cameraPixels.rows);
+    const int imageWidth=std::max(1,static_cast<int>(cameraPixels.cols*scale));
+    const int imageHeight=std::max(1,static_cast<int>(cameraPixels.rows*scale));
+    const int left=(drawingWidth-imageWidth)/2;
+    const int top=49+(drawingHeight-imageHeight)/2;
+    cameraViewport={left,top,left+imageWidth,top+imageHeight};
+    BITMAPINFO bitmapInfo={};
+    bitmapInfo.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+    bitmapInfo.bmiHeader.biWidth=cameraPixels.cols;
+    bitmapInfo.bmiHeader.biHeight=-cameraPixels.rows;
+    bitmapInfo.bmiHeader.biPlanes=1;
+    bitmapInfo.bmiHeader.biBitCount=32;
+    bitmapInfo.bmiHeader.biCompression=BI_RGB;
+    HDC deviceContext=GetDC(previewWindow);
+    if(!deviceContext)return;
+    HBRUSH background=CreateSolidBrush(RGB(7,13,22));
+    RECT backgroundRectangle={0,49,drawingWidth,height};
+    FillRect(deviceContext,&backgroundRectangle,background);
+    DeleteObject(background);
+    SetStretchBltMode(deviceContext,HALFTONE);
+    const cv::Mat& displayed=maskView?maskPixels:cameraPixels;
+    StretchDIBits(deviceContext,left,top,imageWidth,imageHeight,
+        0,0,displayed.cols,displayed.rows,displayed.data,&bitmapInfo,DIB_RGB_COLORS,SRCCOPY);
+    if(cornerCount>0){
+        HPEN cyanPen=CreatePen(PS_SOLID,3,RGB(71,225,245));
+        HPEN oldPen=static_cast<HPEN>(SelectObject(deviceContext,cyanPen));
+        for(int index=0;index<cornerCount;index++){
+            const int x=left+static_cast<int>(screenCorners[index].x*imageWidth);
+            const int y=top+static_cast<int>(screenCorners[index].y*imageHeight);
+            Ellipse(deviceContext,x-6,y-6,x+6,y+6);
+            if(index){
+                const int previousX=left+static_cast<int>(screenCorners[index-1].x*imageWidth);
+                const int previousY=top+static_cast<int>(screenCorners[index-1].y*imageHeight);
+                MoveToEx(deviceContext,previousX,previousY,nullptr);
+                LineTo(deviceContext,x,y);
+            }
+        }
+        SelectObject(deviceContext,oldPen);DeleteObject(cyanPen);
+    }
+    if(activePanel!=NoPanel){
+        RECT panelRectangle={drawingWidth,49,width,height};
+        HBRUSH panelBrush=CreateSolidBrush(RGB(238,244,251));
+        FillRect(deviceContext,&panelRectangle,panelBrush);
+        DeleteObject(panelBrush);
+    }
+    SetBkMode(deviceContext,OPAQUE);
+    SetBkColor(deviceContext,RGB(7,13,22));
+    SetTextColor(deviceContext,RGB(240,250,255));
+    const std::string label=calibrationStep>=0
+        ? "CALIBRATE: Click corner "+std::to_string(calibrationStep+1)+"/4 (TL, TR, BR, BL)"
+        : zeroingStep==1?"ZEROING: Fire the laser at the target"
+        : zeroingStep==2?"ZEROING: Click the intended target position"
+        : maskView?"DETECTION MASK - white pixels are candidates"
+        :"CAMERA - Presets / Settings / Calibration / Zeroing";
+    TextOutA(deviceContext,12,54,label.c_str(),static_cast<int>(label.size()));
     ReleaseDC(previewWindow, deviceContext);
 }
 

@@ -17,6 +17,25 @@ canvas{display:block}#hud{position:fixed;top:14px;left:14px;right:14px;display:f
 button{border:0;border-radius:10px;padding:13px 24px;background:#23a4ed;color:#061525;font-size:17px;font-weight:750;cursor:pointer}
 #toast{position:fixed;left:50%;top:26%;transform:translate(-50%,-50%);font-weight:800;font-size:30px;text-shadow:0 3px 22px #000;pointer-events:none;opacity:0;transition:opacity .15s;z-index:3}
 #toast.visible{opacity:1}
+body.biathlon-winter{
+background:#b7c8d0 url('https://images.unsplash.com/photo-1483664852095-d6cc6870702d?auto=format&fit=crop&w=1920&q=83') center 44%/cover no-repeat
+}
+body.biathlon-winter::before{
+content:'';position:fixed;inset:0;pointer-events:none;
+background:linear-gradient(180deg,rgba(211,224,232,.14) 0%,rgba(226,238,245,.02) 35%,rgba(243,248,249,.30) 68%,rgba(247,249,250,.82) 100%);
+}
+body.biathlon-winter::after{
+content:'';position:fixed;bottom:0;left:0;right:0;height:20%;pointer-events:none;
+background:linear-gradient(0deg,rgba(237,244,246,.92),rgba(230,242,246,.28) 65%,transparent);
+}
+#biathlonControls{position:fixed;left:50%;top:12px;transform:translateX(-50%);
+display:none;align-items:center;gap:7px;z-index:3;
+background:#0c2433db;padding:7px 9px;border:1px solid #8daebf88;border-radius:10px;font-size:12px}
+body.biathlon-winter #biathlonControls{display:flex}
+#biathlonControls select{border:1px solid #7cabbc;color:#f5fbff;background:#244452;
+border-radius:6px;padding:6px 7px;font:inherit}
+#biathlonControls small{color:#d1e5ed}
+@media(max-width:740px){#biathlonControls{top:78px}#biathlonControls small{display:none}}
 body.duck-hunt{background:#60777a url('https://images.unsplash.com/photo-1673201132281-e5521f5321b8?auto=format&fit=crop&w=1920&q=85') center center / cover no-repeat}
 #photoCredit{position:fixed;right:12px;bottom:12px;z-index:2;font:11px system-ui;background:#081520aa;border-radius:6px;padding:5px 9px;display:none}
 body.duck-hunt #photoCredit{display:block}
@@ -39,7 +58,11 @@ body.duck-hunt #photoCredit{display:block}
 </div>
 <button id="exitGame" title="Выйти в Laser Lab">✕ Выход</button><div id="modeHint"></div>
 <div id="connection">Камера: подключение к ws://127.0.0.1:8765… · Мышь тоже работает</div>
-<div id="toast"></div><div id="photoCredit">Фон: <a href="https://unsplash.com/photos/a-body-of-water-surrounded-by-tall-grass-N8R00J6ct_A" target="_blank" rel="noopener">Camara Negra / Unsplash</a></div>
+<div id="toast"></div>
+<div id="biathlonControls"><span>🎯 РЕЖИМ</span>
+<select id="biathlonPosture"><option value="standing">Стоя · 115 мм</option>
+<option value="prone">Лёжа · 45 мм</option></select>
+<small id="biathlonHelp">5 выстрелов · 5 мишеней</small></div><div id="photoCredit">Фон: <a href="https://unsplash.com/photos/a-body-of-water-surrounded-by-tall-grass-N8R00J6ct_A" target="_blank" rel="noopener">Camara Negra / Unsplash</a></div>
 <div id="laserDebug">Выстрелов с камеры: 0 · калибровка ещё не настроена</div>
 <div id="laserDot"></div>
 <div id="overlay"><div class="panel">
@@ -60,6 +83,7 @@ const requestedMode=new URLSearchParams(location.search).get('mode');
 const gameMode=Object.hasOwn(availableModes,requestedMode)?requestedMode:'arcade';
 const modeDefinition=availableModes[gameMode];
 if(gameMode==='ducks')document.body.classList.add('duck-hunt');
+if(gameMode==='biathlon')document.body.classList.add('biathlon-winter');
 const modeHint=document.getElementById('modeHint');
 modeHint.textContent=modeDefinition.title;
 document.getElementById('panelTitle').textContent=modeDefinition.title;
@@ -70,8 +94,8 @@ window.parent.postMessage({type:'laser-game-exit'},location.origin);
 }else window.location.href='../web-detector/';
 };
 const scene=new THREE.Scene();
-scene.background=gameMode==='ducks'?null:new THREE.Color(0x081323);
-scene.fog=gameMode==='ducks'?null:new THREE.Fog(0x081323,13,26);
+scene.background=(gameMode==='ducks'||gameMode==='biathlon')?null:new THREE.Color(0x081323);
+scene.fog=(gameMode==='ducks'||gameMode==='biathlon')?null:new THREE.Fog(0x081323,13,26);
 const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.1,100);
 camera.position.set(0,0,11);
 const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,powerPreference:'high-performance'});
@@ -115,35 +139,105 @@ map:wallTexture,color:0x8c9cab,roughness:1
 }));
 wall.position.z=-3.3;
 scene.add(wall);
-if(gameMode==='ducks')wall.visible=false;
+if(gameMode==='ducks'||gameMode==='biathlon')wall.visible=false;
 
-// Single white steel face with five apertures, one metal frame and two legs.
+// Winter biathlon: weathered one-piece steel target bank, five holes,
+// raised frame, bolts, metal supports, frost and range lane sign.
+// Standard proportions approximated from IBU's 5-target 1170-1350 mm plate.
 const biathlonAssembly=new THREE.Group();
 const biathlonFrameMaterial=new THREE.MeshStandardMaterial({
-color:0x647582,metalness:0.72,roughness:0.45});
+color:0x536c79,metalness:0.76,roughness:0.36});
+const biathlonSnowMaterial=new THREE.MeshStandardMaterial({
+color:0xf3f7f7,metalness:0.02,roughness:0.94});
+function makeSteelFaceTexture(){
+const canvas=document.createElement('canvas');
+canvas.width=1536;canvas.height=384;
+const graphics=canvas.getContext('2d');
+const gradient=graphics.createLinearGradient(0,0,0,384);
+gradient.addColorStop(0,'#f1f3ef');
+gradient.addColorStop(.15,'#e3e8e5');
+gradient.addColorStop(.52,'#d7dcda');
+gradient.addColorStop(.85,'#f2f2ed');
+gradient.addColorStop(1,'#c3ced0');
+graphics.fillStyle=gradient;graphics.fillRect(0,0,1536,384);
+for(let speck=0;speck<25000;speck++){
+const light=Math.random()>.52;
+graphics.fillStyle=light?'rgba(255,255,255,.08)':'rgba(55,79,88,.065)';
+graphics.fillRect(Math.random()*1536,Math.random()*384,1+Math.random()*2,1+Math.random()*2);
+}
+for(let stain=0;stain<20;stain++){
+graphics.strokeStyle='rgba(111,121,115,.07)';
+graphics.lineWidth=1+Math.random()*2;
+graphics.beginPath();
+const x=Math.random()*1536,y=Math.random()*384;
+graphics.moveTo(x,y);graphics.lineTo(x+Math.random()*4,y+8+Math.random()*38);graphics.stroke();
+}
+graphics.strokeStyle='rgba(40,67,81,.24)';graphics.lineWidth=4;
+graphics.strokeRect(8,8,1520,368);
+const texture=new THREE.CanvasTexture(canvas);
+texture.colorSpace=THREE.SRGBColorSpace;
+return texture;
+}
+const biathlonFaceTexture=makeSteelFaceTexture();
 const biathlonFaceMaterial=new THREE.MeshStandardMaterial({
-color:0xe9e9e3,metalness:0.20,roughness:0.67});
+map:biathlonFaceTexture,metalness:0.3,roughness:0.76});
 const biathlonPanel=new THREE.Mesh(
 new THREE.BoxGeometry(11.05,2.35,0.18),biathlonFaceMaterial);
 biathlonPanel.position.set(0,0,-0.04);
 biathlonAssembly.add(biathlonPanel);
 for(const borderY of [-1.21,1.21]){
 const border=new THREE.Mesh(new THREE.BoxGeometry(11.19,0.10,0.23),biathlonFrameMaterial);
-border.position.set(0,borderY,-0.08);biathlonAssembly.add(border);
+border.position.set(0,borderY,0.02);biathlonAssembly.add(border);
 }
 for(const borderX of [-5.57,5.57]){
 const border=new THREE.Mesh(new THREE.BoxGeometry(0.10,2.48,0.23),biathlonFrameMaterial);
-border.position.set(borderX,0,-0.08);biathlonAssembly.add(border);
+border.position.set(borderX,0,0.02);biathlonAssembly.add(border);
 }
 for(const legX of [-4.6,4.6]){
 const leg=new THREE.Mesh(new THREE.BoxGeometry(0.16,1.9,0.2),biathlonFrameMaterial);
-leg.position.set(legX,-2.20,-0.22);biathlonAssembly.add(leg);
-const foot=new THREE.Mesh(new THREE.BoxGeometry(0.75,0.12,0.42),biathlonFrameMaterial);
+leg.position.set(legX,-2.20,-0.2);biathlonAssembly.add(leg);
+const foot=new THREE.Mesh(new THREE.BoxGeometry(0.76,0.12,0.42),biathlonFrameMaterial);
 foot.position.set(legX,-3.15,-0.22);biathlonAssembly.add(foot);
+const bracing=new THREE.Mesh(new THREE.BoxGeometry(.11,1.2,.11),biathlonFrameMaterial);
+bracing.rotation.z=legX<0?-.42:.42;
+bracing.position.set(legX+(legX<0?-.30:.30),-2.2,-.27);biathlonAssembly.add(bracing);
 }
-biathlonAssembly.position.set(0,0,-0.65);
-biathlonAssembly.visible=false;
-scene.add(biathlonAssembly);
+// Frost collected on the top horizontal lip.
+const icyRidge=new THREE.Mesh(new THREE.BoxGeometry(11.08,.065,.29),biathlonSnowMaterial);
+icyRidge.position.set(0,1.29,-.015);
+biathlonAssembly.add(icyRidge);
+// Small stamped bolt heads and metal washers at the panel corners.
+for(const boltX of [-5.2,5.2,-3.25,3.25,0]){
+for(const boltY of [-.98,.98]){
+const washer=new THREE.Mesh(new THREE.CylinderGeometry(.055,.055,.022,16),
+biathlonFrameMaterial);
+washer.rotation.x=Math.PI/2;washer.position.set(boltX,boltY,.094);
+biathlonAssembly.add(washer);
+const head=new THREE.Mesh(new THREE.BoxGeometry(.036,.009,.007),
+new THREE.MeshBasicMaterial({color:0x192e39}));
+head.position.set(boltX,boltY,.11);biathlonAssembly.add(head);
+}
+}
+// Lane marker above the assembly.
+const laneSign=new THREE.Group();
+const signPlate=new THREE.Mesh(new THREE.BoxGeometry(.76,.77,.10),
+new THREE.MeshStandardMaterial({color:0xeacb4f,metalness:.15,roughness:.7}));
+laneSign.add(signPlate);
+function labelTexture(){
+const canvas=document.createElement('canvas');canvas.width=256;canvas.height=256;
+const drawing=canvas.getContext('2d');drawing.clearRect(0,0,256,256);
+drawing.font='bold 160px Arial';drawing.textAlign='center';drawing.textBaseline='middle';
+drawing.fillStyle='#202d2e';drawing.fillText('19',128,139);
+const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;
+return texture;
+}
+const signDigits=new THREE.Mesh(new THREE.PlaneGeometry(.7,.7),
+new THREE.MeshBasicMaterial({map:labelTexture(),transparent:true}));
+signDigits.position.z=.06;laneSign.add(signDigits);
+laneSign.position.set(0,2.08,0);
+biathlonAssembly.add(laneSign);
+biathlonAssembly.position.set(0,-0.18,-0.65);
+biathlonAssembly.visible=false;scene.add(biathlonAssembly);
 // Flat but physically shaded printed targets: paper, popper and mechanical biathlon.
 function paperTargetTexture(){
 const canvas=document.createElement('canvas');

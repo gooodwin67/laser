@@ -15,6 +15,8 @@
 #include <cmath>
 #include <conio.h>
 #include <cstring>
+#include <array>
+#include <iomanip>
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
@@ -33,6 +35,79 @@ std::mutex socketMutex;
 SOCKET clientSocket = INVALID_SOCKET;
 std::atomic<bool> running{true};
 HWND previewWindow = nullptr;
+HWND toolbarButtons[5]={};
+HWND presetButtons[4]={};
+HWND calibrateButton=nullptr,clearCalibrationButton=nullptr;
+HWND zeroButton=nullptr,clearZeroButton=nullptr;
+HWND settingsStatus=nullptr;
+enum PanelView { NoPanel, PresetPanel, SettingsPanel, CalibrationPanel, ZeroPanel };
+enum UiButton { CameraButtonId=2100, PresetButtonId, SettingsButtonId, CalibrationButtonId, ZeroButtonId,
+PresetOneId=2120,PresetTwoId,PresetThreeId,PresetSaveId,
+CalibrateId=2130,ClearCalibrationId,ZeroStartId,ZeroClearId };
+PanelView activePanel=NoPanel;
+bool maskView=false;
+int calibrationStep=-1;
+int zeroingStep=0;
+cv::Point2f screenCorners[4]={};
+int cornerCount=0;
+double zeroOffsetX=0,zeroOffsetY=0;
+cv::Point2f lastLaserRaw(0,0),lastLaserCorrected(0,0);
+bool lastLaserValid=false;
+RECT cameraViewport={};
+std::string settingsIniPath;
+std::atomic<int> uiAction{0};
+
+int iniInt(const char* section,const char* key,int fallback){
+    return static_cast<int>(GetPrivateProfileIntA(section,key,fallback,settingsIniPath.c_str()));
+}
+double iniDouble(const char* section,const char* key,double fallback){
+    char buffer[80]={};
+    GetPrivateProfileStringA(section,key,"",buffer,sizeof(buffer),settingsIniPath.c_str());
+    if(!buffer[0])return fallback;
+    try{return std::stod(buffer);}catch(...){return fallback;}
+}
+void saveInt(const char* section,const char* key,int value){
+    WritePrivateProfileStringA(section,key,std::to_string(value).c_str(),settingsIniPath.c_str());
+}
+void saveDouble(const char* section,const char* key,double value){
+    WritePrivateProfileStringA(section,key,std::to_string(value).c_str(),settingsIniPath.c_str());
+}
+void persistCalibration(){
+    saveInt("calibration","count",cornerCount);
+    for(int index=0;index<cornerCount;index++){
+        saveDouble("calibration",("x"+std::to_string(index)).c_str(),screenCorners[index].x);
+        saveDouble("calibration",("y"+std::to_string(index)).c_str(),screenCorners[index].y);
+    }
+    saveDouble("calibration","offsetX",zeroOffsetX);
+    saveDouble("calibration","offsetY",zeroOffsetY);
+}
+void loadCalibration(){
+    cornerCount=std::clamp(iniInt("calibration","count",0),0,4);
+    for(int index=0;index<cornerCount;index++){
+        screenCorners[index].x=static_cast<float>(iniDouble("calibration",("x"+std::to_string(index)).c_str(),0));
+        screenCorners[index].y=static_cast<float>(iniDouble("calibration",("y"+std::to_string(index)).c_str(),0));
+    }
+    zeroOffsetX=iniDouble("calibration","offsetX",0);
+    zeroOffsetY=iniDouble("calibration","offsetY",0);
+}
+bool correctedPoint(const cv::Point2f& raw,cv::Point2f& corrected){
+    corrected=raw;
+    if(cornerCount==4){
+        const cv::Point2f destination[4]={{0,0},{1,0},{1,1},{0,1}};
+        const cv::Mat transform=cv::getPerspectiveTransform(screenCorners,destination);
+        const std::vector<cv::Point2f> source={raw};
+        std::vector<cv::Point2f> mapped;
+        cv::perspectiveTransform(source,mapped,transform);
+        if(mapped.empty()||!std::isfinite(mapped[0].x)||!std::isfinite(mapped[0].y))return false;
+        corrected=mapped[0];
+    }
+    corrected.x+=static_cast<float>(zeroOffsetX);
+    corrected.y+=static_cast<float>(zeroOffsetY);
+    return true;
+}
+void updateLayout(HWND window);
+void updatePanels();
+
 enum ControlId {
     BrightnessControl=2001, RedDifferenceControl, RedRiseControl, SpotAreaControl,
     FocusControl, ExposureControl, AutoFocusControl, AutoExposureControl
@@ -59,25 +134,47 @@ HWND focusAutomaticCheckbox=nullptr;
 HWND exposureAutomaticCheckbox=nullptr;
 HWND cameraStatusLabel=nullptr;
 
-void layoutPreviewControls(HWND window) {
-    RECT rect={};
-    GetClientRect(window,&rect);
-    const int windowWidth=rect.right;
-    const int windowHeight=rect.bottom;
-    const int columnWidth=std::max(360,(windowWidth-30)/2);
-    const int settingsTop=std::max(120,windowHeight-250);
+void layoutPreviewControls(HWND window){
+    RECT rect={};GetClientRect(window,&rect);
+    const int width=rect.right,height=rect.bottom;
+    const int sideLeft=std::max(0,width-368);
     for(int index=0;index<6;index++){
-        const int column=index/3;
-        const int row=index%3;
-        const int left=12+column*(columnWidth+4);
-        const int top=settingsTop+row*67;
-        SetWindowPos(sliders[index].label,nullptr,left,top,columnWidth-12,19,SWP_NOZORDER);
-        SetWindowPos(sliders[index].trackbar,nullptr,left,top+21,columnWidth-20,32,SWP_NOZORDER);
+        const bool visible=activePanel==SettingsPanel;
+        ShowWindow(sliders[index].label,visible?SW_SHOW:SW_HIDE);
+        ShowWindow(sliders[index].trackbar,visible?SW_SHOW:SW_HIDE);
+        const int top=62+index*82;
+        SetWindowPos(sliders[index].label,nullptr,sideLeft+12,top,350,36,SWP_NOZORDER);
+        SetWindowPos(sliders[index].trackbar,nullptr,sideLeft+12,top+34,340,35,SWP_NOZORDER);
     }
-    SetWindowPos(focusAutomaticCheckbox,nullptr,12,windowHeight-38,260,22,SWP_NOZORDER);
-    SetWindowPos(exposureAutomaticCheckbox,nullptr,columnWidth+16,windowHeight-38,260,22,SWP_NOZORDER);
-    SetWindowPos(cameraStatusLabel,nullptr,290,windowHeight-38,std::max(220,windowWidth-590),22,SWP_NOZORDER);
+    const bool settingsVisible=activePanel==SettingsPanel;
+    ShowWindow(focusAutomaticCheckbox,settingsVisible?SW_SHOW:SW_HIDE);
+    ShowWindow(exposureAutomaticCheckbox,settingsVisible?SW_SHOW:SW_HIDE);
+    ShowWindow(cameraStatusLabel,settingsVisible?SW_SHOW:SW_HIDE);
+    SetWindowPos(focusAutomaticCheckbox,nullptr,sideLeft+12,560,160,22,SWP_NOZORDER);
+    SetWindowPos(exposureAutomaticCheckbox,nullptr,sideLeft+182,560,170,22,SWP_NOZORDER);
+    SetWindowPos(cameraStatusLabel,nullptr,sideLeft+12,594,340,70,SWP_NOZORDER);
+    for(int index=0;index<5;index++)
+        SetWindowPos(toolbarButtons[index],nullptr,12+index*128,7,122,34,SWP_NOZORDER);
+    for(int index=0;index<4;index++){
+        ShowWindow(presetButtons[index],activePanel==PresetPanel?SW_SHOW:SW_HIDE);
+        SetWindowPos(presetButtons[index],nullptr,sideLeft+12,70+index*58,330,43,SWP_NOZORDER);
+    }
+    for(HWND button:{calibrateButton,clearCalibrationButton}){
+        ShowWindow(button,activePanel==CalibrationPanel?SW_SHOW:SW_HIDE);
+    }
+    SetWindowPos(calibrateButton,nullptr,sideLeft+12,70,330,43,SWP_NOZORDER);
+    SetWindowPos(clearCalibrationButton,nullptr,sideLeft+12,126,330,43,SWP_NOZORDER);
+    for(HWND button:{zeroButton,clearZeroButton})
+        ShowWindow(button,activePanel==ZeroPanel?SW_SHOW:SW_HIDE);
+    SetWindowPos(zeroButton,nullptr,sideLeft+12,70,330,43,SWP_NOZORDER);
+    SetWindowPos(clearZeroButton,nullptr,sideLeft+12,126,330,43,SWP_NOZORDER);
+    ShowWindow(settingsStatus,activePanel==NoPanel?SW_HIDE:SW_SHOW);
+    SetWindowPos(settingsStatus,nullptr,sideLeft+12,activePanel==SettingsPanel?680:210,340,100,SWP_NOZORDER);
 }
+void updatePanels(){
+    if(previewWindow)layoutPreviewControls(previewWindow);
+}
+void updateLayout(HWND window){layoutPreviewControls(window);}
 void updateSliderLabels() {
     for(auto& setting:sliders){
         if(!setting.label||!setting.trackbar)continue;
@@ -120,14 +217,85 @@ void createPreviewControls(HWND window) {
         WS_CHILD|WS_VISIBLE,0,0,400,22,window,nullptr,GetModuleHandleA(nullptr),nullptr);
     SendMessageA(focusAutomaticCheckbox,BM_SETCHECK,BST_CHECKED,0);
     SendMessageA(exposureAutomaticCheckbox,BM_SETCHECK,BST_CHECKED,0);
+    const char* buttonLabels[]={"Camera / Mask","Presets","Settings","Calibration","Zeroing"};
+    for(int index=0;index<5;index++)
+        toolbarButtons[index]=CreateWindowExA(0,"BUTTON",buttonLabels[index],WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
+        0,0,100,34,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(CameraButtonId+index)),
+        GetModuleHandleA(nullptr),nullptr);
+    const char* presetLabels[]={"Red Filter","Dark Background","Sensitive","Save / Load User Preset"};
+    for(int index=0;index<4;index++)
+        presetButtons[index]=CreateWindowExA(0,"BUTTON",presetLabels[index],WS_CHILD|BS_PUSHBUTTON,
+        0,0,250,40,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(PresetOneId+index)),
+        GetModuleHandleA(nullptr),nullptr);
+    calibrateButton=CreateWindowExA(0,"BUTTON","Select four corners",WS_CHILD|BS_PUSHBUTTON,
+        0,0,200,40,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(CalibrateId)),GetModuleHandleA(nullptr),nullptr);
+    clearCalibrationButton=CreateWindowExA(0,"BUTTON","Clear calibration",WS_CHILD|BS_PUSHBUTTON,
+        0,0,200,40,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(ClearCalibrationId)),GetModuleHandleA(nullptr),nullptr);
+    zeroButton=CreateWindowExA(0,"BUTTON","Shoot, then click target",WS_CHILD|BS_PUSHBUTTON,
+        0,0,200,40,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(ZeroStartId)),GetModuleHandleA(nullptr),nullptr);
+    clearZeroButton=CreateWindowExA(0,"BUTTON","Clear zeroing offset",WS_CHILD|BS_PUSHBUTTON,
+        0,0,200,40,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(ZeroClearId)),GetModuleHandleA(nullptr),nullptr);
+    settingsStatus=CreateWindowExA(0,"STATIC","",WS_CHILD|SS_LEFT,
+        0,0,320,70,window,nullptr,GetModuleHandleA(nullptr),nullptr);
     updateSliderLabels();
     layoutPreviewControls(window);
 }
 
 
 LRESULT CALLBACK previewWindowProcedure(HWND window, UINT message, WPARAM wordParameter, LPARAM longParameter) {
+    if(message==WM_LBUTTONDOWN && calibrationStep>=0){
+        const int pointX=GET_X_LPARAM(longParameter),pointY=GET_Y_LPARAM(longParameter);
+        if(pointX>=cameraViewport.left&&pointX<cameraViewport.right&&
+           pointY>=cameraViewport.top&&pointY<cameraViewport.bottom){
+            screenCorners[calibrationStep]=cv::Point2f(
+                static_cast<float>(pointX-cameraViewport.left)/(cameraViewport.right-cameraViewport.left),
+                static_cast<float>(pointY-cameraViewport.top)/(cameraViewport.bottom-cameraViewport.top));
+            calibrationStep++;
+            cornerCount=calibrationStep;
+            if(calibrationStep==4){
+                calibrationStep=-1;
+                persistCalibration();
+                activePanel=CalibrationPanel;
+                updatePanels();
+            }
+        }
+        return 0;
+    }
+    if(message==WM_LBUTTONDOWN && zeroingStep==2 && lastLaserValid){
+        const int pointX=GET_X_LPARAM(longParameter),pointY=GET_Y_LPARAM(longParameter);
+        if(pointX>=cameraViewport.left&&pointX<cameraViewport.right&&
+           pointY>=cameraViewport.top&&pointY<cameraViewport.bottom){
+            const cv::Point2f aim(
+                static_cast<float>(pointX-cameraViewport.left)/(cameraViewport.right-cameraViewport.left),
+                static_cast<float>(pointY-cameraViewport.top)/(cameraViewport.bottom-cameraViewport.top));
+            cv::Point2f wanted;
+            if(correctedPoint(aim,wanted)){
+                zeroOffsetX+=wanted.x-lastLaserCorrected.x;
+                zeroOffsetY+=wanted.y-lastLaserCorrected.y;
+                persistCalibration();
+            }
+            zeroingStep=0;activePanel=ZeroPanel;updatePanels();
+        }
+        return 0;
+    }
+    if(message==WM_COMMAND){
+        const int clicked=LOWORD(wordParameter);
+        if(clicked==CameraButtonId)maskView=!maskView;
+        else if(clicked==PresetButtonId)activePanel=activePanel==PresetPanel?NoPanel:PresetPanel;
+        else if(clicked==SettingsButtonId)activePanel=activePanel==SettingsPanel?NoPanel:SettingsPanel;
+        else if(clicked==CalibrationButtonId)activePanel=activePanel==CalibrationPanel?NoPanel:CalibrationPanel;
+        else if(clicked==ZeroButtonId)activePanel=activePanel==ZeroPanel?NoPanel:ZeroPanel;
+        else if(clicked==CalibrateId){cornerCount=0;calibrationStep=0;activePanel=NoPanel;}
+        else if(clicked==ClearCalibrationId){cornerCount=0;calibrationStep=-1;persistCalibration();}
+        else if(clicked==ZeroStartId){zeroingStep=1;activePanel=NoPanel;}
+        else if(clicked==ZeroClearId){zeroOffsetX=0;zeroOffsetY=0;persistCalibration();}
+        else if(clicked>=PresetOneId&&clicked<=PresetSaveId)uiAction=clicked;
+        updatePanels();
+        return 0;
+    }
+
     if (message==WM_SIZE && focusAutomaticCheckbox){
-        layoutPreviewControls(window);
+        updateLayout(window);
         return 0;
     }
     if(message==WM_HSCROLL){
@@ -159,11 +327,12 @@ HWND createPreviewWindow() {
     }
     HWND window = CreateWindowExA(0, className,
         "Laser Core - Camera / Detection mask (Q to exit)", WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 1320, 760,
+        CW_USEDEFAULT, CW_USEDEFAULT, 1300, 820,
         nullptr, nullptr, windowClass.hInstance, nullptr);
     if (window) {
         createPreviewControls(window);
         ShowWindow(window, SW_SHOW);
+        updateLayout(window);
         UpdateWindow(window);
     }
     return window;

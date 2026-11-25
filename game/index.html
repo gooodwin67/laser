@@ -24,6 +24,21 @@ body.biathlon-winter::before{
 content:'';position:fixed;inset:0;pointer-events:none;
 background:linear-gradient(180deg,rgba(211,224,232,.14) 0%,rgba(226,238,245,.02) 35%,rgba(243,248,249,.30) 68%,rgba(247,249,250,.82) 100%);
 }
+#biathlonSnowfall{display:none}
+body.biathlon-winter #biathlonSnowfall{
+display:block;position:fixed;inset:-100% 0 0;z-index:1;pointer-events:none;opacity:.30;
+background-image:
+radial-gradient(2px 2px at 36px 43px,#fff 58%,transparent 80%),
+radial-gradient(1px 1px at 102px 81px,#fff 50%,transparent 90%),
+radial-gradient(2px 2px at 167px 25px,#fff 50%,transparent 85%);
+background-size:207px 151px,251px 233px,323px 287px;
+animation:biathlonSnowfall 24s linear infinite
+}
+@keyframes biathlonSnowfall{from{transform:translateY(-10%)}to{transform:translateY(42%)}}
+#biathlonCredit{display:none;position:fixed;bottom:12px;right:12px;z-index:2;
+font:11px system-ui;background:#1a3039ab;padding:6px 9px;border-radius:6px}
+body.biathlon-winter #biathlonCredit{display:block}
+#biathlonCredit a{color:#e9faff}
 body.biathlon-winter::after{
 content:'';position:fixed;bottom:0;left:0;right:0;height:20%;pointer-events:none;
 background:linear-gradient(0deg,rgba(237,244,246,.92),rgba(230,242,246,.28) 65%,transparent);
@@ -59,6 +74,8 @@ body.duck-hunt #photoCredit{display:block}
 <button id="exitGame" title="Выйти в Laser Lab">✕ Выход</button><div id="modeHint"></div>
 <div id="connection">Камера: подключение к ws://127.0.0.1:8765… · Мышь тоже работает</div>
 <div id="toast"></div>
+<div id="biathlonSnowfall"></div>
+<div id="biathlonCredit">Зимний пейзаж: <a href="https://unsplash.com/" target="_blank" rel="noopener">Unsplash</a> · 3D-рубеж</div>
 <div id="biathlonControls"><span>🎯 РЕЖИМ</span>
 <select id="biathlonPosture"><option value="standing">Стоя · 115 мм</option>
 <option value="prone">Лёжа · 45 мм</option></select>
@@ -75,7 +92,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.181.0/build/three.m
 
 const availableModes={
 arcade:{title:'LASER ARCADE',description:'Три круглые спортивные мишени: две движущиеся, одна неподвижная. 60 секунд на максимальный счёт.'},
-biathlon:{title:'БИАТЛОН',description:'Пять неподвижных мишеней и пять выстрелов. Закрой как можно больше мишеней.'},
+biathlon:{title:'БИАТЛОН · ЗИМНИЙ РУБЕЖ',description:'Пять чёрных отверстий на едином стальном щите. Пять патронов, белые заслонки поднимаются снизу. Выбирай стрельбу стоя (115 мм) или лёжа (45 мм). Попадания оставляют следы на металле.'},
 popups:{title:'БЫСТРЫЕ МИШЕНИ',description:'Спортивная мишень появляется в случайном месте, исчезает через 2 секунды. Успей попасть за 60 секунд.'},
 ducks:{title:'УТИНАЯ ЗАВОДЬ',description:'Утреннее озеро: летящие утки, 60 секунд, 100 очков за попадание. Утки улетают и появляются снова.'}
 };
@@ -112,6 +129,12 @@ scene.add(keyLight);
 const rimLight=new THREE.PointLight(0x39aaff,38,13);
 rimLight.position.set(2,-1,4);
 scene.add(rimLight);
+if(gameMode==='biathlon'){
+keyLight.intensity=1.7;
+keyLight.position.set(-4,7,9);
+rimLight.intensity=4;
+rimLight.color.setHex(0xc9dfee);
+}
 
 // Procedural concrete wall with seams and subtle wear, no external texture files.
 const wallCanvas=document.createElement('canvas');

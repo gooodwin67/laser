@@ -876,6 +876,9 @@ int main(int argc, char** argv) {
     const size_t separator=applicationPath.find_last_of("\\\\/");
     settingsIniPath=applicationPath.substr(0,separator+1)+"laser-core.ini";
     loadCalibration();
+    digitalZoomTimes100=std::clamp(iniInt("optics","zoom",100),100,600);
+    zoomCenterXTimes1000=std::clamp(iniInt("optics","centerX",500),0,1000);
+    zoomCenterYTimes1000=std::clamp(iniInt("optics","centerY",500),0,1000);
 
     WSADATA winsockData = {};
     if (WSAStartup(MAKEWORD(2, 2), &winsockData) != 0) {
@@ -953,6 +956,26 @@ int main(int argc, char** argv) {
     int previousSettingValues[6]={-9999,-9999,-9999,-9999,-9999,-9999};
     while (running) {
         const int action=uiAction.exchange(0);
+        if(hardwareApplyPending){
+            hardwareApplyPending=false;
+            const int index=requestedHardwareProperty;
+            if(index>=0&&index<hardwarePropertyCount){
+                const auto& property=hardwareProperties[index];
+                const bool accepted=camera.set(property.cvProperty,requestedHardwareValue);
+                const double actual=camera.get(property.cvProperty);
+                std::ostringstream feedback;
+                feedback<<property.name<<": "<<(accepted?"driver accepted":"UNSUPPORTED / rejected")
+                        <<" | requested "<<requestedHardwareValue<<" | reported "<<actual;
+                opticsFeedback=feedback.str();
+                if(opticsStatus)SetWindowTextA(opticsStatus,opticsFeedback.c_str());
+                std::cout<<opticsFeedback<<"\n";
+                if(accepted&&(property.cvProperty==cv::CAP_PROP_ZOOM||
+                    property.cvProperty==cv::CAP_PROP_PAN||property.cvProperty==cv::CAP_PROP_TILT)){
+                    resetOpticsCalibration();
+                    opticsChanged=true;
+                }
+            }
+        }
         if(previewWindow&&action==CameraModeApplyId){
             const int resolutionIndex=static_cast<int>(SendMessageA(resolutionCombo,CB_GETCURSEL,0,0));
             const int fpsIndex=static_cast<int>(SendMessageA(fpsCombo,CB_GETCURSEL,0,0));
@@ -1033,6 +1056,27 @@ int main(int argc, char** argv) {
         if (!camera.read(frame) || frame.empty()) {
             std::cerr << "Camera read failed\n";
             break;
+        }
+        // Crop before analysis AND preview. Coordinates are in the visible crop,
+        // so the existing 4-corner homography maps them directly to the game.
+        if(opticsChanged){
+            previousRed.release();
+            opticsChanged=false;
+        }
+        const double zoom=static_cast<double>(digitalZoomTimes100)/100.0;
+        const int croppedWidth=std::max(1,static_cast<int>(std::round(frame.cols/zoom)));
+        const int croppedHeight=std::max(1,static_cast<int>(std::round(frame.rows/zoom)));
+        const double centerX=std::clamp(static_cast<double>(zoomCenterXTimes1000)/1000.0,
+            croppedWidth/(2.0*frame.cols),1.0-croppedWidth/(2.0*frame.cols));
+        const double centerY=std::clamp(static_cast<double>(zoomCenterYTimes1000)/1000.0,
+            croppedHeight/(2.0*frame.rows),1.0-croppedHeight/(2.0*frame.rows));
+        const int left=std::clamp(static_cast<int>(std::round(centerX*frame.cols-croppedWidth/2.0)),
+            0,frame.cols-croppedWidth);
+        const int top=std::clamp(static_cast<int>(std::round(centerY*frame.rows-croppedHeight/2.0)),
+            0,frame.rows-croppedHeight);
+        if(zoom>1.001){
+            const cv::Rect region(left,top,croppedWidth,croppedHeight);
+            frame=frame(region).clone();
         }
         const auto capturedAt = std::chrono::steady_clock::now();
         const double readMilliseconds =

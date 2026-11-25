@@ -842,11 +842,9 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        // Show the raw camera frame and EXACT onset mask used by the detector.
-        // Throttle preview to avoid wasting time on rendering every frame.
-        if ((totalFrames % 3) == 0 && !onsetMask.empty()) {
-            drawPreview(frame, onsetMask, detectedOnset, detectedX, detectedY);
-        }
+        // Show the current camera frame and the exact detector mask.
+        // Preview refreshes at capture speed; measure any FPS impact in diagnostics.
+        if(!onsetMask.empty())drawPreview(frame,onsetMask,detectedOnset,detectedX,detectedY);
         MSG windowMessage = {};
         while (PeekMessageA(&windowMessage, nullptr, 0, 0, PM_REMOVE)) {
             TranslateMessage(&windowMessage);

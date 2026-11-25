@@ -18,7 +18,9 @@ top toolbar:
 - **Presets** provides three trial detector configurations and separate **Save**
   / **Load User Preset** buttons
 - **Settings** opens brightness, red excess, temporal change, spot size, focus,
-  exposure, autofocus and autoexposure controls with short descriptions
+  exposure, autofocus and autoexposure controls with short descriptions. It also
+  offers native capture resolution and requested FPS selectors; the driver may
+  refuse unsupported modes.
 - **Calibration**: click **Select four corners**, then click the image corners
   **top-left → top-right → bottom-right → bottom-left**, as visible in the
   camera image. They map to the corners of the projected game screen.

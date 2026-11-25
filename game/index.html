@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Laser Arcade — тестовая игра</title>
+<style>
+*{box-sizing:border-box}html,body{height:100%;margin:0;overflow:hidden;background:#080f1d;color:#edf6ff;font:16px system-ui,Arial,sans-serif}
+canvas{display:block}#hud{position:fixed;top:14px;left:14px;right:14px;display:flex;gap:9px;flex-wrap:wrap;pointer-events:none;z-index:2}
+.metric{background:#071322dc;border:1px solid #4b70908c;border-radius:12px;padding:9px 14px;min-width:105px;backdrop-filter:blur(8px)}
+.metric small{color:#9cbed4;font-size:11px;display:block;text-transform:uppercase;letter-spacing:.08em}
+.metric strong{font-size:23px;font-variant-numeric:tabular-nums}
+#connection{position:fixed;bottom:16px;left:16px;background:#071322db;border:1px solid #39546b;border-radius:10px;padding:9px 13px;font-size:12px;color:#b3c5d9;z-index:2;max-width:calc(100vw - 32px)}
+#overlay{position:fixed;inset:0;background:#040913ad;display:grid;place-items:center;z-index:5;padding:18px}
+.panel{width:min(430px,100%);text-align:center;padding:30px 22px;background:linear-gradient(155deg,#182d42,#0a1728);border:1px solid #47718e;border-radius:18px;box-shadow:0 25px 80px #000a}
+.panel h1{font-size:38px;margin:4px 0 12px;letter-spacing:.02em}.panel p{color:#b9cde0;line-height:1.6}
+button{border:0;border-radius:10px;padding:13px 24px;background:#23a4ed;color:#061525;font-size:17px;font-weight:750;cursor:pointer}
+#toast{position:fixed;left:50%;top:26%;transform:translate(-50%,-50%);font-weight:800;font-size:30px;text-shadow:0 3px 22px #000;pointer-events:none;opacity:0;transition:opacity .15s;z-index:3}
+#toast.visible{opacity:1}
+#laserDebug{position:fixed;bottom:54px;left:16px;background:#081522e8;border:1px solid #487c92;border-radius:9px;padding:8px 11px;font:12px system-ui;z-index:3;color:#cde8fa;pointer-events:none}
+#laserDot{position:fixed;width:17px;height:17px;border:2px solid #ff4e59;border-radius:50%;transform:translate(-50%,-50%);z-index:3;pointer-events:none;display:none}
+@media(max-width:600px){#hud{top:8px;left:8px;right:8px;gap:5px}.metric{min-width:75px;padding:6px 9px}.metric strong{font-size:19px}.panel h1{font-size:30px}}
+</style>
+</head>
+<body>
+<div id="hud">
+<div class="metric"><small>Очки</small><strong id="score">0</strong></div>
+<div class="metric"><small>Попадания</small><strong id="hits">0</strong></div>
+<div class="metric"><small>Промахи</small><strong id="misses">0</strong></div>
+<div class="metric"><small>Время</small><strong id="timer">60</strong></div>
+</div>
+<div id="connection">Камера: подключение к ws://127.0.0.1:8765… · Мышь тоже работает</div>
+<div id="toast"></div>
+<div id="laserDebug">Выстрелов с камеры: 0 · калибровка ещё не настроена</div>
+<div id="laserDot"></div>
+<div id="overlay"><div class="panel">
+<h1 id="panelTitle">LASER ARCADE</h1>
+<p id="panelDescription">Три движущиеся 3D-мишени. Попадай в них за 60 секунд.<br>Пока Windows-детектор собирается, играй мышью или касанием.</p>
+<button id="playButton">Начать игру</button>
+</div></div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.181.0/build/three.module.js';
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x081323);
+scene.fog=new THREE.Fog(0x081323,13,26);
+const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.1,100);
+camera.position.set(0,0,11);
+const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0x9bcaff,0x17223b,2.1));
+const keyLight=new THREE.DirectionalLight(0xffffff,2.7);
+keyLight.position.set(-3,5,7);
+scene.add(keyLight);
+const rimLight=new THREE.PointLight(0x39aaff,38,13);
+rimLight.position.set(2,-1,4);
+scene.add(rimLight);
+
+// Procedural concrete wall with seams and subtle wear, no external texture files.
+const wallCanvas=document.createElement('canvas');
+wallCanvas.width=1024;
+wallCanvas.height=512;
+const wallContext=wallCanvas.getContext('2d');
+wallContext.fillStyle='#526070';
+wallContext.fillRect(0,0,1024,512);
+for(let speckIndex=0;speckIndex<18000;speckIndex++){
+const shade=Math.random()>0.5?255:0;
+wallContext.fillStyle='rgba('+shade+','+shade+','+shade+','+(0.015+Math.random()*0.075)+')';
+wallContext.fillRect(Math.random()*1024,Math.random()*512,1+Math.random()*3,1+Math.random()*3);
+}
+wallContext.strokeStyle='rgba(11,21,32,0.34)';
+wallContext.lineWidth=3;
+for(let seamY=0;seamY<=512;seamY+=128){
+wallContext.beginPath();wallContext.moveTo(0,seamY);wallContext.lineTo(1024,seamY);wallContext.stroke();
+}
+for(let seamX=0;seamX<=1024;seamX+=256){
+wallContext.beginPath();wallContext.moveTo(seamX,0);wallContext.lineTo(seamX,512);wallContext.stroke();
+}
+const wallTexture=new THREE.CanvasTexture(wallCanvas);
+wallTexture.colorSpace=THREE.SRGBColorSpace;
+const wall=new THREE.Mesh(new THREE.PlaneGeometry(24,13),new THREE.MeshStandardMaterial({
+map:wallTexture,color:0x8c9cab,roughness:1
+}));
+wall.position.z=-3.3;
+scene.add(wall);
+const targets=[];
+const targetColors=[0x4fd4ff,0xffb64a,0xd78aff];
+for(let index=0;index<3;index++){
+const group=new THREE.Group();
+const sphere=new THREE.Mesh(
+new THREE.SphereGeometry(0.73,32,24),
+new THREE.MeshStandardMaterial({color:targetColors[index],metalness:0.3,roughness:0.27,emissive:targetColors[index],emissiveIntensity:0.15})
+);
+group.add(sphere);
+const ring=new THREE.Mesh(new THREE.TorusGeometry(0.93,0.035,8,64),new THREE.MeshBasicMaterial({color:targetColors[index],transparent:true,opacity:0.65}));
+ring.position.z=-0.15;
+group.add(ring);
+scene.add(group);
+targets.push({group,sphere,ring,index,flashUntil:0});
+}
+// Permanent scorch decals are in world space, behind the moving targets.
+const scorchMarks=[];
+const splashParticles=[];
+const scorchGeometry=new THREE.PlaneGeometry(1,1);
+const particleGeometry=new THREE.CircleGeometry(1,10);
+const particleMaterial=new THREE.MeshBasicMaterial({
+color:0x090c12,transparent:true,opacity:0.93,depthWrite:false
+});
+
+function createScorchTexture(){
+const canvas=document.createElement('canvas');
+canvas.width=128;
+canvas.height=128;
+const context=canvas.getContext('2d');
+context.clearRect(0,0,128,128);
+const centerX=64,centerY=64;
+const irregularity=Array.from({length:38},()=>0.72+Math.random()*0.32);
+context.beginPath();
+for(let section=0;section<irregularity.length;section++){
+const angle=section*2*Math.PI/irregularity.length;
+const radius=39*irregularity[section];
+const pointX=centerX+Math.cos(angle)*radius;
+const pointY=centerY+Math.sin(angle)*radius;
+if(section===0)context.moveTo(pointX,pointY);else context.lineTo(pointX,pointY);
+}
+context.closePath();
+context.fillStyle='rgba(3,5,7,0.93)';
+context.fill();
+for(let spotIndex=0;spotIndex<18;spotIndex++){
+const angle=Math.random()*Math.PI*2;
+const distance=27+Math.random()*27;
+context.beginPath();
+context.arc(centerX+Math.cos(angle)*distance,centerY+Math.sin(angle)*distance,0.7+Math.random()*3.3,0,Math.PI*2);
+context.fillStyle='rgba(6,7,10,'+(0.4+Math.random()*0.5)+')';
+context.fill();
+}
+const texture=new THREE.CanvasTexture(canvas);
+texture.colorSpace=THREE.SRGBColorSpace;
+return texture;
+}
+const scorchTextures=Array.from({length:6},createScorchTexture);
+let scorchTextureIndex=0;
+function addWallImpact(worldPosition){
+const texture=scorchTextures[scorchTextureIndex++%scorchTextures.length];
+const material=new THREE.MeshBasicMaterial({
+map:texture,transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1
+});
+const decal=new THREE.Mesh(scorchGeometry,material);
+const size=0.28+Math.random()*0.16;
+decal.scale.set(size,size*(0.85+Math.random()*0.3),1);
+decal.rotation.z=Math.random()*Math.PI*2;
+decal.position.set(worldPosition.x,worldPosition.y,-3.06);
+scene.add(decal);
+scorchMarks.push(decal);
+if(scorchMarks.length>100){
+const oldest=scorchMarks.shift();
+scene.remove(oldest);
+oldest.material.dispose();
+}
+// Short outward splash: independent little dark fragments, each with its own velocity.
+for(let particleIndex=0;particleIndex<12;particleIndex++){
+const angle=Math.random()*Math.PI*2;
+const speed=0.9+Math.random()*2.2;
+const radius=0.016+Math.random()*0.025;
+const particle=new THREE.Mesh(particleGeometry,particleMaterial);
+particle.position.set(worldPosition.x,worldPosition.y,-2.97);
+particle.scale.setScalar(radius);
+scene.add(particle);
+splashParticles.push({
+mesh:particle,
+velocityX:Math.cos(angle)*speed,
+velocityY:Math.sin(angle)*speed,
+startedAt:performance.now(),
+duration:180+Math.random()*140
+});
+}
+}
+function updateWallParticles(timestamp,deltaSeconds){
+for(let particleIndex=splashParticles.length-1;particleIndex>=0;particleIndex--){
+const particle=splashParticles[particleIndex];
+const elapsed=timestamp-particle.startedAt;
+if(elapsed>=particle.duration){
+scene.remove(particle.mesh);
+splashParticles.splice(particleIndex,1);
+continue;
+}
+const progress=elapsed/particle.duration;
+particle.mesh.position.x+=particle.velocityX*deltaSeconds*(1-progress);
+particle.mesh.position.y+=particle.velocityY*deltaSeconds*(1-progress);
+particle.mesh.scale.setScalar(0.026*(1-progress)+0.002);
+}
+}
+function resetWallMarks(){
+for(const decal of scorchMarks){scene.remove(decal);decal.material.dispose();}
+scorchMarks.length=0;
+for(const particle of splashParticles)scene.remove(particle.mesh);
+splashParticles.length=0;
+}
+
+let audioContext=null;
+let noiseBuffer=null;
+function initializeAudio(){
+try{
+if(!audioContext){
+audioContext=new (window.AudioContext||window.webkitAudioContext)();
+const sampleRate=audioContext.sampleRate;
+noiseBuffer=audioContext.createBuffer(1,Math.round(sampleRate*0.45),sampleRate);
+const samples=noiseBuffer.getChannelData(0);
+for(let sampleIndex=0;sampleIndex<samples.length;sampleIndex++){
+samples[sampleIndex]=Math.random()*2-1;
+}
+}
+if(audioContext.state==='suspended')audioContext.resume().catch(()=>{});
+}catch(error){console.warn('Audio is unavailable',error);}
+}
+function playTone(frequency,endFrequency,duration,volume,waveform='sine',delay=0){
+if(!audioContext||audioContext.state!=='running')return;
+const startTime=audioContext.currentTime+delay;
+const oscillator=audioContext.createOscillator();
+const gain=audioContext.createGain();
+oscillator.type=waveform;
+oscillator.frequency.setValueAtTime(frequency,startTime);
+oscillator.frequency.exponentialRampToValueAtTime(Math.max(30,endFrequency),startTime+duration);
+gain.gain.setValueAtTime(Math.max(0.0001,volume),startTime);
+gain.gain.exponentialRampToValueAtTime(0.0001,startTime+duration);
+oscillator.connect(gain).connect(audioContext.destination);
+oscillator.start(startTime);
+oscillator.stop(startTime+duration+0.01);
+}
+function playNoise(duration,volume,cutoff){
+if(!audioContext||audioContext.state!=='running'||!noiseBuffer)return;
+const startTime=audioContext.currentTime;
+const source=audioContext.createBufferSource();
+source.buffer=noiseBuffer;
+const filter=audioContext.createBiquadFilter();
+filter.type='lowpass';
+filter.frequency.value=cutoff;
+const gain=audioContext.createGain();
+gain.gain.setValueAtTime(volume,startTime);
+gain.gain.exponentialRampToValueAtTime(0.0001,startTime+duration);
+source.connect(filter).connect(gain).connect(audioContext.destination);
+source.start(startTime);
+source.stop(startTime+duration);
+}
+function playShotSound(){
+playNoise(0.11,0.16,2200);
+playTone(160,52,0.13,0.16,'triangle');
+}
+function playHitSound(){
+playTone(650,1050,0.12,0.11,'sine');
+playTone(940,1320,0.16,0.07,'sine',0.045);
+}
+function playMissSound(){
+playTone(260,110,0.20,0.10,'triangle');
+playNoise(0.12,0.035,450);
+}
+const raycaster=new THREE.Raycaster();
+const pointer=new THREE.Vector2();
+let gameActive=false;
+let score=0;
+let hits=0;
+let misses=0;
+let gameEndsAt=0;
+let lastFrameTimestamp=performance.now();
+let toastTimer=0;
+const scoreElement=document.getElementById('score');
+const hitsElement=document.getElementById('hits');
+const missesElement=document.getElementById('misses');
+const timerElement=document.getElementById('timer');
+const overlayElement=document.getElementById('overlay');
+const toastElement=document.getElementById('toast');
+
+const statusElement=document.getElementById('connection');
+const laserDebugElement=document.getElementById('laserDebug');
+const laserDotElement=document.getElementById('laserDot');
+let receivedShotCount=0;
+let laserDotTimer=null;
+function showCameraEvent(normalizedX,normalizedY){
+receivedShotCount++;
+laserDebugElement.textContent='Выстрелов с камеры: '+receivedShotCount+
+' · X '+(normalizedX*100).toFixed(1)+'% / Y '+(normalizedY*100).toFixed(1)+
+'% · координаты без калибровки!';
+laserDotElement.style.left=(normalizedX*100)+'%';
+laserDotElement.style.top=(normalizedY*100)+'%';
+laserDotElement.style.display='block';
+clearTimeout(laserDotTimer);
+laserDotTimer=setTimeout(()=>laserDotElement.style.display='none',500);
+}
+
+function refreshHud(){
+scoreElement.textContent=String(score);
+hitsElement.textContent=String(hits);
+missesElement.textContent=String(misses);
+}
+function showToast(message,hit){
+toastElement.textContent=message;
+toastElement.style.color=hit?'#7bffc5':'#ff8e96';
+toastElement.classList.add('visible');
+clearTimeout(toastTimer);
+toastTimer=setTimeout(()=>toastElement.classList.remove('visible'),260);
+}
+function updateTargets(seconds){
+const aspect=Math.max(0.65,Math.min(2.4,camera.aspect));
+const horizontalRange=3.55*Math.min(1,aspect/1.3);
+targets[0].group.position.set(Math.sin(seconds*1.15)*horizontalRange,1.55+Math.sin(seconds*1.8)*0.3,0);
+targets[1].group.position.set(0,0,0); // Центральный шар неподвижен.
+targets[2].group.position.set(Math.sin(seconds*1.4+4.8)*horizontalRange,-1.8+Math.sin(seconds*2.1)*0.28,0);
+for(const target of targets){
+target.group.rotation.z=target.index===1?0:Math.sin(seconds*1.6+target.index)*0.12;
+target.ring.rotation.z=target.index===1?0:seconds*(0.2+target.index*0.15);
+target.sphere.material.emissiveIntensity=performance.now()<target.flashUntil?1.4:0.15;
+}
+}
+function shoot(normalizedX,normalizedY){
+if(!gameActive)return;
+if(!Number.isFinite(normalizedX)||!Number.isFinite(normalizedY)||normalizedX<0||normalizedX>1||normalizedY<0||normalizedY>1)return;
+// Use the target transforms from the LAST rendered frame. Do not move them
+// during the input event: the player must hit what was actually displayed.
+pointer.set(normalizedX*2-1,1-normalizedY*2);
+raycaster.setFromCamera(pointer,camera);
+const intersection=raycaster.intersectObjects(targets.map(target=>target.sphere),false)[0];
+playShotSound();
+if(intersection){
+// Hits never produce a wall stain; the sphere itself flashes.
+playHitSound();
+const target=targets.find(item=>item.sphere===intersection.object);
+target.flashUntil=performance.now()+150;
+hits++;
+score+=100;
+showToast('+100',true);
+}else{
+misses++;
+playMissSound();
+// Intersect the actual wall plane to place a persistent scorch mark.
+const wallIntersection=raycaster.intersectObject(wall,false)[0];
+if(wallIntersection)addWallImpact(wallIntersection.point);
+showToast('Промах',false);
+}
+refreshHud();
+// Display the result in this input task rather than waiting for another animation frame.
+renderer.render(scene,camera);
+}
+function endGame(){
+if(!gameActive)return;
+gameActive=false;
+document.getElementById('panelTitle').textContent='Раунд завершён';
+document.getElementById('panelDescription').textContent='Очки: '+score+' · Попаданий: '+hits+' · Промахов: '+misses;
+document.getElementById('playButton').textContent='Ещё раз';
+overlayElement.style.display='grid';
+}
+function startGame(){
+initializeAudio();
+resetWallMarks();
+score=0;hits=0;misses=0;refreshHud();
+gameActive=true;
+gameEndsAt=performance.now()+60000;
+timerElement.textContent='60';
+overlayElement.style.display='none';
+}
+document.getElementById('playButton').addEventListener('click',startGame);
+renderer.domElement.addEventListener('pointerdown',event=>{
+// Map the actual pointer event to the canvas rectangle, not the window size.
+const canvasRectangle=renderer.domElement.getBoundingClientRect();
+shoot(
+(event.clientX-canvasRectangle.left)/canvasRectangle.width,
+(event.clientY-canvasRectangle.top)/canvasRectangle.height
+);
+});
+let socket;
+function connect(){
+socket=new WebSocket('ws://127.0.0.1:8765');
+socket.onopen=()=>statusElement.textContent='Камера: Laser Core подключён · Мышь тоже работает';
+socket.onclose=()=>{
+statusElement.textContent='Камера: нет соединения · Играть можно мышью';
+setTimeout(connect,2500);
+};
+socket.onerror=()=>statusElement.textContent='Камера: соединение недоступно · Играй мышью';
+socket.onmessage=event=>{
+try{
+const shot=JSON.parse(event.data);
+if(shot.type==='shot'){
+const shotX=Number(shot.x);
+const shotY=Number(shot.y);
+if(Number.isFinite(shotX)&&Number.isFinite(shotY)&&shotX>=0&&shotX<=1&&shotY>=0&&shotY<=1){
+showCameraEvent(shotX,shotY);
+shoot(shotX,shotY);
+}
+}
+}catch(error){console.warn('Invalid shot event',error);}
+};
+}
+connect();
+function animate(timestamp){
+requestAnimationFrame(animate);
+const deltaSeconds=Math.min(0.05,Math.max(0,(timestamp-lastFrameTimestamp)/1000));
+lastFrameTimestamp=timestamp;
+const seconds=timestamp/1000;
+updateTargets(seconds);
+updateWallParticles(timestamp,deltaSeconds);
+if(gameActive){
+const remaining=Math.max(0,Math.ceil((gameEndsAt-timestamp)/1000));
+timerElement.textContent=String(remaining);
+if(remaining===0)endGame();
+}
+renderer.render(scene,camera);
+}
+requestAnimationFrame(animate);
+window.addEventListener('resize',()=>{
+camera.aspect=innerWidth/innerHeight;
+camera.updateProjectionMatrix();
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
+});
+</script>
+</body></html>

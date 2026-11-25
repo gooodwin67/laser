@@ -59,8 +59,10 @@ const percent=value=>(value*100).toFixed(1)+'%';
 function displayHint(message){hint.textContent=message;hint.classList.add('visible')}
 function clearHint(){hint.classList.remove('visible')}
 function geometry(){
-const width=overlay.width=window.innerWidth;
-const height=overlay.height=window.innerHeight;
+const width=window.innerWidth;
+const height=window.innerHeight;
+if(overlay.width!==width)overlay.width=width;
+if(overlay.height!==height)overlay.height=height;
 const videoWidth=video.videoWidth||config.width;
 const videoHeight=video.videoHeight||config.height;
 const scale=Math.min(width/videoWidth,height/videoHeight);

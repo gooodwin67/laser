@@ -37,7 +37,7 @@ background:#0c1d2df6;border:1px solid #437c9b;padding:12px;border-radius:11px;bo
 <body>
 <video id="camera" autoplay playsinline muted></video><canvas id="overlay"></canvas><canvas id="mask"></canvas>
 <iframe id="embeddedGame" src="about:blank" title="Laser Arcade" allow="autoplay" loading="eager"></iframe>
-<div id="toolbar"><button id="cameraButton">▶ Камера</button><button data-menu="presets">Пресеты</button><button data-menu="settings">Настройки</button><button data-menu="calibration">Калибровка</button><button data-menu="zeroing">Пристрелка</button><button id="showMask">Маска</button><button id="viewButton">🎮 Игры</button><span id="status">Камера выключена</span></div>
+<div id="toolbar"><button id="cameraButton">▶ Камера</button><button data-menu="presets">Пресеты</button><button data-menu="settings">Настройки</button><button data-menu="optics">🔎 Оптика / Зум</button><button data-menu="calibration">Калибровка</button><button data-menu="zeroing">Пристрелка</button><button id="showMask">Маска</button><button id="viewButton">🎮 Игры</button><span id="status">Камера выключена</span></div>
 <section id="gameChoice" hidden>
 <strong>Выбери игру</strong>
 <p>Выстрелы поступают с камеры, а сама игра открывается здесь же.</p>
@@ -105,7 +105,7 @@ const panel=document.getElementById('panel');
 const panelTitle=document.getElementById('panelTitle');
 const panelContent=document.getElementById('panelContent');
 const storageKey='laser-lab-web-v1';
-const defaults={width:640,height:480,frameRate:30,analysisWidth:320,brightness:190,redExcess:45,redChange:28,spotPixels:3,maxSpotPixels:160,debounce:220,mode:'red',mask:false,offsetX:0,offsetY:0,corners:[],presets:[]};
+const defaults={width:640,height:480,frameRate:30,analysisWidth:320,brightness:190,redExcess:45,redChange:28,spotPixels:3,maxSpotPixels:160,debounce:220,mode:'red',mask:false,digitalZoom:1,zoomCenterX:0.5,zoomCenterY:0.5,offsetX:0,offsetY:0,corners:[],presets:[]};
 let config={...defaults};
 try{const stored=JSON.parse(localStorage.getItem(storageKey)||'{}');config={...defaults,...stored};}catch{}
 const readyPresets=[
@@ -156,6 +156,28 @@ tone.start(startedAt);tone.stop(startedAt+0.12);
 }
 document.addEventListener('pointerdown',unlockSound,{once:true});
 const save=()=>localStorage.setItem(storageKey,JSON.stringify(config));
+function zoomRegion(){
+const zoom=clamp(Number(config.digitalZoom)||1,1,6);
+const halfWidth=0.5/zoom;
+const centerX=clamp(Number(config.zoomCenterX)||0.5,halfWidth,1-halfWidth);
+const centerY=clamp(Number(config.zoomCenterY)||0.5,halfWidth,1-halfWidth);
+return {zoom,centerX,centerY,x:centerX-halfWidth,y:centerY-halfWidth,width:1/zoom,height:1/zoom};
+}
+function resetAlignmentForZoom(){
+config.corners=[];config.offsetX=0;config.offsetY=0;
+calibrationStage=-1;zeroingStage=0;previousRed=null;
+save();
+statusElement.textContent='Изменена область камеры: повтори калибровку';
+}
+function updateDigitalZoomPreview(){
+const rect=geometry();
+const region=zoomRegion();
+const offsetX=region.zoom*(0.5-region.centerX)*rect.displayWidth;
+const offsetY=region.zoom*(0.5-region.centerY)*rect.displayHeight;
+video.style.transformOrigin='center center';
+video.style.transform='translate('+offsetX+'px,'+offsetY+'px) scale('+region.zoom+')';
+if(!showMask)maskCanvas.style.transform='none';
+}
 const clamp=(value,low,high)=>Math.max(low,Math.min(high,value));
 const percent=value=>(value*100).toFixed(1)+'%';
 function displayHint(message){hint.textContent=message;hint.classList.add('visible')}
@@ -177,6 +199,7 @@ const rect=geometry();
 const x=(clientX-rect.left)/rect.displayWidth;
 const y=(clientY-rect.top)/rect.displayHeight;
 if(x<0||x>1||y<0||y>1)return null;
+// Calibration points are taken in the visible, digitally cropped frame.
 return {x,y};
 }
 function rawToScreen(point){
@@ -254,7 +277,11 @@ const processingHeight=Math.max(1,Math.round(processingWidth*video.videoHeight/v
 if(maskCanvas.width!==processingWidth||maskCanvas.height!==processingHeight){
 maskCanvas.width=processingWidth;maskCanvas.height=processingHeight;previousRed=null;
 }
-maskContext.drawImage(video,0,0,processingWidth,processingHeight);
+const region=zoomRegion();
+maskContext.drawImage(video,
+region.x*video.videoWidth,region.y*video.videoHeight,
+region.width*video.videoWidth,region.height*video.videoHeight,
+0,0,processingWidth,processingHeight);
 let pixels;
 try{pixels=maskContext.getImageData(0,0,processingWidth,processingHeight).data;}
 catch{return;}
@@ -350,6 +377,8 @@ const token=runToken;
 framesStart=performance.now();processedStart=framesStart;frameCounter=processedCounter=0;
 const settings=cameraTrack.getSettings();
 statusElement.textContent=settings.width+'×'+settings.height+' / '+(settings.frameRate||'?')+' FPS';
+updateDigitalZoomPreview();
+if(activePanel==='optics')renderDeviceControls();
 document.getElementById('cameraButton').textContent='■ Стоп';
 if(video.requestVideoFrameCallback)video.requestVideoFrameCallback((timestamp,metadata)=>onVideoFrame(timestamp,metadata,token));
 else requestAnimationFrame(timestamp=>fallbackFrame(timestamp,token));
@@ -375,7 +404,9 @@ function openPanel(name){
 if(activePanel===name){activePanel='';panel.hidden=true;clearHint();return;}
 activePanel=name;panel.hidden=false;
 document.querySelectorAll('[data-menu]').forEach(button=>button.classList.toggle('active',button.dataset.menu===name));
-const titles={presets:'Пресеты',settings:'Настройки камеры и детектора',calibration:'Калибровка проекции',zeroing:'Пристрелка / офсет'};
+const titles={presets:'Пресеты',settings:'Настройки камеры и детектора',
+optics:'Оптика, зум и область распознавания',
+calibration:'Калибровка проекции',zeroing:'Пристрелка / офсет'};
 panelTitle.textContent=titles[name];
 if(name==='settings'){
 panelContent.innerHTML=
@@ -392,6 +423,26 @@ setting('Максимум пикселей','maxSpotPixels',10,800,1,'Не сч�
 setting('Интервал выстрелов, мс','debounce',0,1000,10,'Минимальная задержка между событиями.')+
 '<h3>Аппаратные параметры</h3><p id="cameraCapabilities">Включи камеру, чтобы посмотреть доступные параметры.</p><div id="deviceControls"></div><button id="restartCamera">Применить режим камеры</button>';
 document.getElementById('restartCamera').onclick=startCamera;
+renderDeviceControls();
+}else if(name==='optics'){
+panelContent.innerHTML=
+'<p>Цифровой зум обрезает изображение до выбранного участка и анализирует только его. Это не повышает разрешение сенсора. При изменении области нужно повторно откалибровать четыре угла.</p>'+
+setting('Цифровой зум','digitalZoom',1,6,0.1,'1× — весь кадр, 2× — центральная четверть площади, 6× — сильное приближение без новых деталей.')+
+setting('Центр X','zoomCenterX',0,1,0.01,'Смещение выделенной области влево/вправо.')+
+setting('Центр Y','zoomCenterY',0,1,0.01,'Смещение вверх/вниз.')+
+'<div class="inline"><button id="resetDigitalZoom">Сбросить цифровой зум</button><button id="centerZoom">По центру</button></div>'+
+'<h3>Регулировки драйвера камеры</h3><p>Если есть аппаратный Zoom, Pan или Tilt — они появятся ниже. Наличие Zoom в драйвере НЕ гарантирует настоящий оптический объектив. Поддержка зависит от камеры и браузера.</p>'+
+'<div id="cameraCapabilities">Включи камеру для проверки драйвера.</div><div id="deviceControls"></div>'+
+'<button id="refreshOptics">Обновить возможности камеры</button>';
+document.getElementById('resetDigitalZoom').onclick=()=>{
+config.digitalZoom=1;config.zoomCenterX=0.5;config.zoomCenterY=0.5;
+resetAlignmentForZoom();updateDigitalZoomPreview();openPanel('settings');openPanel('optics');
+};
+document.getElementById('centerZoom').onclick=()=>{
+config.zoomCenterX=0.5;config.zoomCenterY=0.5;
+resetAlignmentForZoom();updateDigitalZoomPreview();openPanel('settings');openPanel('optics');
+};
+document.getElementById('refreshOptics').onclick=renderDeviceControls;
 renderDeviceControls();
 }else if(name==='presets'){
 panelContent.innerHTML='<p>Пресеты сохраняются только в этом браузере. Тестовые значения не гарантируют работу на другой камере.</p>'+
@@ -421,7 +472,13 @@ document.getElementById('resetZeroing').onclick=()=>{config.offsetX=0;config.off
 panelContent.querySelectorAll('[data-key]').forEach(element=>element.addEventListener('input',()=>{
 const key=element.dataset.key;
 const value=element.type==='range'||key==='width'||key==='height'||key==='analysisWidth'||key==='frameRate'?Number(element.value):element.value;
+if(['digitalZoom','zoomCenterX','zoomCenterY'].includes(key)){
 config[key]=value;
+const region=zoomRegion();
+config.zoomCenterX=region.centerX;config.zoomCenterY=region.centerY;
+resetAlignmentForZoom();
+updateDigitalZoomPreview();
+}else config[key]=value;
 const valueLabel=panelContent.querySelector('[data-value="'+key+'"]');
 if(valueLabel)valueLabel.textContent=String(value);
 save();
@@ -431,38 +488,84 @@ document.querySelectorAll('[data-menu]').forEach(button=>button.onclick=()=>open
 async function renderDeviceControls(){
 const target=document.getElementById('deviceControls');
 const label=document.getElementById('cameraCapabilities');
-if(!target||!cameraTrack)return;
+if(!target||!label)return;
+target.replaceChildren();
+if(!cameraTrack){label.textContent='Включи камеру. Без доступа к ней браузер не сообщает поддерживаемые свойства.';return;}
 const capabilities=cameraTrack.getCapabilities?.()||{};
 const settings=cameraTrack.getSettings?.()||{};
-label.textContent='Фактически: '+JSON.stringify({width:settings.width,height:settings.height,frameRate:settings.frameRate,focusMode:settings.focusMode,exposureMode:settings.exposureMode,focusDistance:settings.focusDistance,exposureTime:settings.exposureTime});
-for(const [property,title] of [['focusDistance','Фокус'],['exposureTime','Выдержка']]){
+const names=[
+['zoom','Zoom драйвера','Может быть оптическим или цифровым — зависит от устройства'],
+['pan','Поворот камеры (Pan)','Работает только при поддержке драйвера'],
+['tilt','Наклон камеры (Tilt)','Работает только при поддержке драйвера'],
+['focusDistance','Позиция фокуса','Для ручного фокуса потребуется переключить focusMode'],
+['exposureTime','Выдержка','Время экспозиции, доступно только через некоторые драйверы'],
+['exposureCompensation','Поправка экспозиции','Изменяет автоматическую экспозицию'],
+['brightness','Яркость матрицы','Драйверная яркость, не порог нашего детектора'],
+['contrast','Контраст','Может усилить шум'],
+['saturation','Насыщенность','Влияет на цветовой детектор'],
+['sharpness','Резкость','Программная обработка драйвера может усилить шум'],
+['colorTemperature','Цветовая температура','Баланс белого'],
+['gain','Усиление','Повышает чувствительность вместе с шумом']
+];
+const present=names.filter(([property])=>{
 const range=capabilities[property];
-if(!range||!Number.isFinite(range.min)||!Number.isFinite(range.max))continue;
+return range&&Number.isFinite(range.min)&&Number.isFinite(range.max);
+});
+const modeProperties=[['focusMode','Фокус'],['exposureMode','Экспозиция'],['whiteBalanceMode','Баланс белого']];
+label.textContent='Камера: '+(cameraTrack.label||'без названия')+
+'. Найдено регулировок: '+present.length+'. Фактические значения ниже, неподдерживаемые отмечены.';
+for(const [property,title,description] of names){
+const range=capabilities[property];
 const wrapper=document.createElement('label');
-wrapper.textContent=title+' ('+range.min+'…'+range.max+')';
+wrapper.textContent=title+' — '+(range&&Number.isFinite(range.min)?'доступно':'не поддерживается');
+const explanation=document.createElement('small');
+explanation.textContent=description;
+wrapper.appendChild(explanation);
+if(range&&Number.isFinite(range.min)&&Number.isFinite(range.max)){
+const actual=document.createElement('small');
+actual.textContent='Фактически: '+(settings[property]??'неизвестно')+' | Диапазон: '+range.min+'…'+range.max;
 const control=document.createElement('input');
-control.type='range';control.min=range.min;control.max=range.max;
-control.step=range.step||0.001;control.value=settings[property]??range.min;
-const modeProperty=property==='focusDistance'?'focusMode':'exposureMode';
-const modes=capabilities[modeProperty]||[];
-if(modes.includes('continuous')){
-const automatic=document.createElement('button');
-automatic.textContent='Автоматический '+title.toLowerCase();
-automatic.onclick=async()=>{
-try{await cameraTrack.applyConstraints({advanced:[{[modeProperty]:'continuous'}]});label.textContent='Автоматический '+title.toLowerCase()+' включён';}
-catch(error){label.textContent='Драйвер отклонил настройку: '+error.message;}
-};
-target.appendChild(automatic);
-}
-if(!modes.includes('manual')){control.disabled=true;wrapper.title='Ручной режим недоступен';}
+control.type='range';
+control.min=range.min;control.max=range.max;
+control.step=range.step||((range.max-range.min)/100)||1;
+control.value=clamp(Number(settings[property]??range.min),range.min,range.max);
 control.onchange=async()=>{
-const constraints=property==='focusDistance'?
-{focusMode:'manual',focusDistance:Number(control.value)}:
-{exposureMode:'manual',exposureTime:Number(control.value)};
-try{await cameraTrack.applyConstraints({advanced:[constraints]});label.textContent='Запрошено '+title+': '+control.value+'; фактически: '+cameraTrack.getSettings()[property];}
-catch(error){label.textContent='Драйвер отклонил настройку: '+error.message;}
+try{
+const newValue=Number(control.value);
+const advanced={[property]:newValue};
+if(property==='focusDistance')advanced.focusMode='manual';
+if(property==='exposureTime')advanced.exposureMode='manual';
+if(property==='colorTemperature')advanced.whiteBalanceMode='manual';
+await cameraTrack.applyConstraints({advanced:[advanced]});
+const applied=cameraTrack.getSettings()[property];
+actual.textContent='Запрошено '+newValue+' | Фактически: '+(applied??'нет данных');
+if(['zoom','pan','tilt'].includes(property)){
+resetAlignmentForZoom();updateDigitalZoomPreview();
+}
+}catch(error){actual.textContent='Драйвер отклонил: '+error.message;}
 };
-wrapper.appendChild(control);target.appendChild(wrapper);
+wrapper.append(control,actual);
+}
+target.appendChild(wrapper);
+}
+for(const [property,title] of modeProperties){
+const options=capabilities[property];
+if(!Array.isArray(options)||options.length===0)continue;
+const wrapper=document.createElement('label');
+wrapper.textContent='Режим: '+title;
+const chooser=document.createElement('select');
+for(const option of options){
+const element=document.createElement('option');
+element.value=option;element.textContent=option;chooser.appendChild(element);
+}
+chooser.value=settings[property]||options[0];
+chooser.onchange=async()=>{
+try{
+await cameraTrack.applyConstraints({advanced:[{[property]:chooser.value}]});
+label.textContent='Применён режим '+title+': '+(cameraTrack.getSettings()[property]??'неизвестно');
+}catch(error){label.textContent='Драйвер отказал: '+error.message;}
+};
+wrapper.appendChild(chooser);target.appendChild(wrapper);
 }
 }
 overlay.addEventListener('pointerdown',event=>{
@@ -488,7 +591,8 @@ renderOverlay();
 });
 function animate(){requestAnimationFrame(animate);renderOverlay();}
 requestAnimationFrame(animate);
-window.addEventListener('resize',renderOverlay);
+window.addEventListener('resize',()=>{renderOverlay();updateDigitalZoomPreview();});
+updateDigitalZoomPreview();
 document.getElementById('showMask').classList.toggle('active',showMask);
 </script>
 </body></html>

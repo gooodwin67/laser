@@ -37,13 +37,13 @@ SOCKET clientSocket = INVALID_SOCKET;
 std::atomic<bool> running{true};
 HWND previewWindow = nullptr;
 HWND toolbarButtons[5]={};
-HWND presetButtons[4]={};
+HWND presetButtons[5]={};
 HWND calibrateButton=nullptr,clearCalibrationButton=nullptr;
 HWND zeroButton=nullptr,clearZeroButton=nullptr;
 HWND settingsStatus=nullptr;
 enum PanelView { NoPanel, PresetPanel, SettingsPanel, CalibrationPanel, ZeroPanel };
 enum UiButton { CameraButtonId=2100, PresetButtonId, SettingsButtonId, CalibrationButtonId, ZeroButtonId,
-PresetOneId=2120,PresetTwoId,PresetThreeId,PresetSaveId,
+PresetOneId=2120,PresetTwoId,PresetThreeId,PresetSaveId,PresetLoadId,
 CalibrateId=2130,ClearCalibrationId,ZeroStartId,ZeroClearId };
 PanelView activePanel=NoPanel;
 bool maskView=false;
@@ -156,7 +156,7 @@ void layoutPreviewControls(HWND window){
     SetWindowPos(cameraStatusLabel,nullptr,sideLeft+12,594,340,70,SWP_NOZORDER);
     for(int index=0;index<5;index++)
         SetWindowPos(toolbarButtons[index],nullptr,12+index*128,7,122,34,SWP_NOZORDER);
-    for(int index=0;index<4;index++){
+    for(int index=0;index<5;index++){
         ShowWindow(presetButtons[index],activePanel==PresetPanel?SW_SHOW:SW_HIDE);
         SetWindowPos(presetButtons[index],nullptr,sideLeft+12,70+index*58,330,43,SWP_NOZORDER);
     }
@@ -223,8 +223,8 @@ void createPreviewControls(HWND window) {
         toolbarButtons[index]=CreateWindowExA(0,"BUTTON",buttonLabels[index],WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
         0,0,100,34,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(CameraButtonId+index)),
         GetModuleHandleA(nullptr),nullptr);
-    const char* presetLabels[]={"Red Filter","Dark Background","Sensitive","Save / Load User Preset"};
-    for(int index=0;index<4;index++)
+    const char* presetLabels[]={"Red Filter","Dark Background","Sensitive","Save User Preset","Load User Preset"};
+    for(int index=0;index<5;index++)
         presetButtons[index]=CreateWindowExA(0,"BUTTON",presetLabels[index],WS_CHILD|BS_PUSHBUTTON,
         0,0,250,40,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(PresetOneId+index)),
         GetModuleHandleA(nullptr),nullptr);
@@ -290,7 +290,7 @@ LRESULT CALLBACK previewWindowProcedure(HWND window, UINT message, WPARAM wordPa
         else if(clicked==ClearCalibrationId){cornerCount=0;calibrationStep=-1;persistCalibration();}
         else if(clicked==ZeroStartId){zeroingStep=1;activePanel=NoPanel;}
         else if(clicked==ZeroClearId){zeroOffsetX=0;zeroOffsetY=0;persistCalibration();}
-        else if(clicked>=PresetOneId&&clicked<=PresetSaveId)uiAction=clicked;
+        else if(clicked>=PresetOneId&&clicked<=PresetLoadId)uiAction=clicked;
         updatePanels();
         return 0;
     }
@@ -651,19 +651,18 @@ int main(int argc, char** argv) {
     int previousSettingValues[6]={-9999,-9999,-9999,-9999,-9999,-9999};
     while (running) {
         const int action=uiAction.exchange(0);
-        if(previewWindow&&action>=PresetOneId&&action<=PresetSaveId){
+        if(previewWindow&&action>=PresetOneId&&action<=PresetLoadId){
             const int index=action-PresetOneId;
             if(index==3){
-                const bool hasUserPreset=iniInt("preset-user","saved",0)!=0;
-                if(hasUserPreset){
+                for(int settingIndex=0;settingIndex<6;settingIndex++)
+                    saveInt("preset-user",sliders[settingIndex].caption,sliderValue(sliders[settingIndex].id));
+                saveInt("preset-user","saved",1);
+            }else if(index==4){
+                if(iniInt("preset-user","saved",0)){
                     for(int settingIndex=0;settingIndex<6;settingIndex++){
                         const int value=iniInt("preset-user",sliders[settingIndex].caption,sliders[settingIndex].initial);
                         SendMessageA(sliders[settingIndex].trackbar,TBM_SETPOS,TRUE,value);
                     }
-                }else{
-                    for(int settingIndex=0;settingIndex<6;settingIndex++)
-                        saveInt("preset-user",sliders[settingIndex].caption,sliderValue(sliders[settingIndex].id));
-                    saveInt("preset-user","saved",1);
                 }
             }else{
                 const int presets[3][4]={{141,90,30,2},{205,40,20,2},{135,40,16,1}};

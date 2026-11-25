@@ -51,9 +51,9 @@ body.duck-hunt #photoCredit{display:block}
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.181.0/build/three.module.js';
 
 const availableModes={
-arcade:{title:'LASER ARCADE',description:'Три шара: два движущихся и один неподвижный. 60 секунд на максимальный счёт.'},
+arcade:{title:'LASER ARCADE',description:'Три круглые спортивные мишени: две движущиеся, одна неподвижная. 60 секунд на максимальный счёт.'},
 biathlon:{title:'БИАТЛОН',description:'Пять неподвижных мишеней и пять выстрелов. Закрой как можно больше мишеней.'},
-popups:{title:'БЫСТРЫЕ МИШЕНИ',description:'Мишень появляется в случайном месте, исчезает через 2 секунды. Успей попасть за 60 секунд.'},
+popups:{title:'БЫСТРЫЕ МИШЕНИ',description:'Спортивная мишень появляется в случайном месте, исчезает через 2 секунды. Успей попасть за 60 секунд.'},
 ducks:{title:'УТИНАЯ ЗАВОДЬ',description:'Утреннее озеро: летящие утки, 60 секунд, 100 очков за попадание. Утки улетают и появляются снова.'}
 };
 const requestedMode=new URLSearchParams(location.search).get('mode');
@@ -377,28 +377,56 @@ target.group.position.set((Math.random()*2-1)*horizontalRange,
 popupExpiresAt=timestamp+2000;
 popupNumber++;
 }
+function resetDuck(target,index){
+const visibleHalfHeight=Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.position.z;
+const visibleHalfWidth=visibleHalfHeight*camera.aspect;
+target.duckDirection=index%2===0?1:-1;
+target.duckSpeed=1.05+index*.32+Math.random()*.45;
+target.group.position.set(target.duckDirection>0?-visibleHalfWidth-1.3:visibleHalfWidth+1.3,
+  -1.25+index*1.3+(Math.random()-.5)*.55,0);
+target.group.scale.setScalar(.9-index*.08);
+target.duck.scale.x=target.duckDirection;
+target.group.visible=true;
+}
 function configureTargets(timestamp){
 for(const target of targets){
-target.group.visible=false;target.closed=false;
-target.sphere.material.emissiveIntensity=0.15;
-target.sphere.material.color.setHex(targetColors[target.index]);
+target.group.visible=false;target.closed=false;target.closure=0;
+target.sphere.visible=false;
+target.ring.visible=false;
+target.aperture.visible=false;
+target.cover.visible=false;
+target.plate.visible=false;
+target.stand.visible=false;
+target.duck.visible=false;
+target.cover.position.x=-1.5;
+target.sphere.material.emissiveIntensity=0.0;
+target.group.rotation.z=0;
 target.group.scale.setScalar(1);
 }
 if(gameMode==='arcade'){
-for(let index=0;index<3;index++)targets[index].group.visible=true;
+for(let index=0;index<3;index++){
+const target=targets[index];target.group.visible=true;
+target.sphere.visible=true;target.ring.visible=true;
+}
 }else if(gameMode==='biathlon'){
 const visibleHalfWidth=Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.position.z*camera.aspect;
-const gap=Math.min(1.65,Math.max(0.65,(visibleHalfWidth*2-1.3)/4));
+const gap=Math.min(1.95,Math.max(0.57,(visibleHalfWidth*2-1.2)/4));
 for(const target of targets){
 target.group.visible=true;
-target.group.scale.setScalar(Math.min(0.72,gap*0.52));
+target.group.scale.setScalar(Math.min(.72,gap*.55));
 target.group.position.set((target.index-2)*gap,0,0);
-target.sphere.material.color.setHex(0x272c32);
-target.ring.material.color.setHex(0xece6de);
+target.aperture.visible=true;target.plate.visible=true;target.cover.visible=true;
+target.stand.visible=true;
 }
-}else{
-targets[0].group.visible=true;
+}else if(gameMode==='popups'){
+const target=targets[0];
+target.group.visible=true;target.sphere.visible=true;target.ring.visible=true;
 movePopupTarget(timestamp);
+}else if(gameMode==='ducks'){
+for(let index=0;index<3;index++){
+const target=targets[index];
+target.duck.visible=true;resetDuck(target,index);
+}
 }
 }
 
@@ -448,15 +476,26 @@ const horizontalRange=3.55*Math.min(1,aspect/1.3);
 targets[0].group.position.set(Math.sin(seconds*1.15)*horizontalRange,1.55+Math.sin(seconds*1.8)*0.3,0);
 targets[1].group.position.set(0,0,0);
 targets[2].group.position.set(Math.sin(seconds*1.4+4.8)*horizontalRange,-1.8+Math.sin(seconds*2.1)*0.28,0);
-for(const target of targets){
-target.group.rotation.z=target.index===1?0:Math.sin(seconds*1.6+target.index)*0.12;
-target.ring.rotation.z=target.index===1?0:seconds*(0.2+target.index*0.15);
-}
 }else if(gameMode==='popups'&&gameActive&&timestamp>=popupExpiresAt){
 movePopupTarget(timestamp);
+}else if(gameMode==='ducks'&&gameActive){
+const halfWidth=Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.position.z*camera.aspect;
+for(let index=0;index<3;index++){
+const target=targets[index];
+target.group.position.x+=target.duckDirection*target.duckSpeed*
+Math.min(.05,Math.max(0,(timestamp-lastFrameTimestamp)/1000));
+target.group.position.y+=Math.sin(seconds*4.3+index*1.8)*.006;
+target.leftWing.rotation.z=.24+Math.sin(seconds*12+index)*.48;
+target.rightWing.rotation.z=-.24-Math.sin(seconds*12+index)*.48;
+if(Math.abs(target.group.position.x)>halfWidth+1.8)resetDuck(target,index);
+}
 }
 for(const target of targets){
-target.sphere.material.emissiveIntensity=timestamp<target.flashUntil?1.4:0.15;
+if(gameMode==='biathlon'){
+target.closure+=(Number(target.closed)-target.closure)*Math.min(1,(timestamp-lastFrameTimestamp)/140);
+target.cover.position.x=-1.5*(1-target.closure);
+}
+target.sphere.material.emissiveIntensity=timestamp<target.flashUntil?0.6:0.0;
 }
 }
 function shoot(normalizedX,normalizedY){
@@ -467,29 +506,32 @@ if(!Number.isFinite(normalizedX)||!Number.isFinite(normalizedY)||normalizedX<0||
 pointer.set(normalizedX*2-1,1-normalizedY*2);
 raycaster.setFromCamera(pointer,camera);
 const activeTargets=targets.filter(target=>target.group.visible&&!target.closed);
-const intersection=raycaster.intersectObjects(activeTargets.map(target=>target.sphere),false)[0];
+const colliderFor=target=>gameMode==='ducks'?target.duckBody:
+gameMode==='biathlon'?target.aperture:target.sphere;
+const intersection=raycaster.intersectObjects(activeTargets.map(colliderFor),false)[0];
 shotsFired++;
 playShotSound();
 if(intersection){
 // Hits never produce a wall stain; the sphere itself flashes.
 playHitSound();
-const target=targets.find(item=>item.sphere===intersection.object);
+const target=targets.find(item=>colliderFor(item)===intersection.object);
 target.flashUntil=performance.now()+150;
 hits++;
 score+=100;
 if(gameMode==='biathlon'){
 target.closed=true;
-target.sphere.material.color.setHex(0x40d98a);
-target.ring.material.color.setHex(0x40d98a);
+target.flashUntil=0; // White steel shutter slides across the black aperture.
 }else if(gameMode==='popups'){
 movePopupTarget(performance.now());
+}else if(gameMode==='ducks'){
+resetDuck(target,target.index);
 }
 showToast('+100',true);
 }else{
 misses++;
 playMissSound();
 // Intersect the actual wall plane to place a persistent scorch mark.
-const wallIntersection=raycaster.intersectObject(wall,false)[0];
+const wallIntersection=gameMode==='ducks'?null:raycaster.intersectObject(wall,false)[0];
 if(wallIntersection)addWallImpact(wallIntersection.point);
 showToast('Промах',false);
 }

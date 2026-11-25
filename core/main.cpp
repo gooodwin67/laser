@@ -575,6 +575,12 @@ int main(int argc, char** argv) {
     const int initialBrightness = argumentValue(argc, argv, 5, 190);
     const int initialRedDifference = argumentValue(argc, argv, 6, 45);
     const int initialSpotPixels = std::max(1, argumentValue(argc, argv, 7, 4));
+    char executablePath[MAX_PATH]={};
+    GetModuleFileNameA(nullptr,executablePath,MAX_PATH);
+    std::string applicationPath(executablePath);
+    const size_t separator=applicationPath.find_last_of("\\\\/");
+    settingsIniPath=applicationPath.substr(0,separator+1)+"laser-core.ini";
+    loadCalibration();
 
     WSADATA winsockData = {};
     if (WSAStartup(MAKEWORD(2, 2), &winsockData) != 0) {
@@ -602,7 +608,11 @@ int main(int argc, char** argv) {
     previewWindow = createPreviewWindow();
     if (!previewWindow) std::cerr << "Camera preview unavailable; detection will continue.\n";
     if(previewWindow){
-        const int initialValues[]={initialBrightness,initialRedDifference,28,initialSpotPixels};
+        const int initialValues[]={
+            iniInt("settings","Brightness",initialBrightness),
+            iniInt("settings","Red excess",initialRedDifference),
+            iniInt("settings","Red change",28),
+            iniInt("settings","Spot pixels",initialSpotPixels)};
         for(int index=0;index<4;index++)
             SendMessageA(sliders[index].trackbar,TBM_SETPOS,TRUE,initialValues[index]);
         // DirectShow camera properties are allowed to report unsupported values.
@@ -638,7 +648,39 @@ int main(int argc, char** argv) {
               << " in ONE captured frame; 220 ms debounce.\n";
     std::cout << "Camera preview and detection mask with controls for focus, exposure, and detector.\n";
     std::cout << "Keep camera fixed. Press Q in this console or close the preview window.\n";
+    int previousSettingValues[6]={-9999,-9999,-9999,-9999,-9999,-9999};
     while (running) {
+        const int action=uiAction.exchange(0);
+        if(previewWindow&&action>=PresetOneId&&action<=PresetSaveId){
+            const int index=action-PresetOneId;
+            if(index==3){
+                const bool hasUserPreset=iniInt("preset-user","saved",0)!=0;
+                if(hasUserPreset){
+                    for(int settingIndex=0;settingIndex<6;settingIndex++){
+                        const int value=iniInt("preset-user",sliders[settingIndex].caption,sliders[settingIndex].initial);
+                        SendMessageA(sliders[settingIndex].trackbar,TBM_SETPOS,TRUE,value);
+                    }
+                }else{
+                    for(int settingIndex=0;settingIndex<6;settingIndex++)
+                        saveInt("preset-user",sliders[settingIndex].caption,sliderValue(sliders[settingIndex].id));
+                    saveInt("preset-user","saved",1);
+                }
+            }else{
+                const int presets[3][4]={{141,90,30,2},{205,40,20,2},{135,40,16,1}};
+                for(int settingIndex=0;settingIndex<4;settingIndex++)
+                    SendMessageA(sliders[settingIndex].trackbar,TBM_SETPOS,TRUE,presets[index][settingIndex]);
+            }
+            updateSliderLabels();
+        }
+        if(previewWindow){
+            for(int settingIndex=0;settingIndex<6;settingIndex++){
+                const int value=sliderValue(sliders[settingIndex].id);
+                if(value!=previousSettingValues[settingIndex]){
+                    saveInt("settings",sliders[settingIndex].caption,value);
+                    previousSettingValues[settingIndex]=value;
+                }
+            }
+        }
         const int minimumBrightness=previewWindow?sliderValue(BrightnessControl):initialBrightness;
         const int minimumRedDifference=previewWindow?sliderValue(RedDifferenceControl):initialRedDifference;
         const int redRiseThreshold=previewWindow?sliderValue(RedRiseControl):28;
@@ -734,7 +776,15 @@ int main(int argc, char** argv) {
                             (centroids.at<double>(bestRegion, 1) + 0.5) / frame.rows;
                         const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                             capturedAt.time_since_epoch()).count();
-                        sendShot(pointX, pointY, timestamp);
+                        const cv::Point2f rawPoint(
+                            static_cast<float>(pointX),static_cast<float>(pointY));
+                        cv::Point2f mappedPoint;
+                        if(!correctedPoint(rawPoint,mappedPoint))continue;
+                        sendShot(mappedPoint.x,mappedPoint.y,timestamp);
+                        lastLaserRaw=rawPoint;
+                        lastLaserCorrected=mappedPoint;
+                        lastLaserValid=true;
+                        if(zeroingStep==1)zeroingStep=2;
                         shotCount++;
                         lastShotTime = capturedAt;
                         std::cout << "Shot " << shotCount
@@ -771,6 +821,8 @@ int main(int argc, char** argv) {
                 actualSettings << "Actual focus: " << camera.get(cv::CAP_PROP_FOCUS)
                                << " | exposure: " << camera.get(cv::CAP_PROP_EXPOSURE)
                                << " | FPS: " << camera.get(cv::CAP_PROP_FPS);
+                actualSettings << " | calibration " << cornerCount << "/4"
+                               << " | offset " << zeroOffsetX << ", " << zeroOffsetY;
                 SetWindowTextA(cameraStatusLabel,actualSettings.str().c_str());
             }
             std::cout << "Captured FPS: " << (captureCount / elapsed)

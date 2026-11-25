@@ -82,6 +82,7 @@ ducks:{title:'УТИНАЯ ЗАВОДЬ',description:'Утреннее озер�
 const requestedMode=new URLSearchParams(location.search).get('mode');
 const gameMode=Object.hasOwn(availableModes,requestedMode)?requestedMode:'arcade';
 const modeDefinition=availableModes[gameMode];
+const biathlonPosture=document.getElementById('biathlonPosture');
 if(gameMode==='ducks')document.body.classList.add('duck-hunt');
 if(gameMode==='biathlon')document.body.classList.add('biathlon-winter');
 const modeHint=document.getElementById('modeHint');
@@ -386,6 +387,62 @@ texture.colorSpace=THREE.SRGBColorSpace;
 return texture;
 }
 const scorchTextures=Array.from({length:6},createScorchTexture);
+// Dark punctures, chipped white enamel and fine radial cracks.
+// Hits are baked into a reusable texture, then placed on the actual surface.
+function makeBiathlonImpactTexture(){
+const canvas=document.createElement('canvas');canvas.width=128;canvas.height=128;
+const drawing=canvas.getContext('2d');
+const center=64;
+const gradient=drawing.createRadialGradient(center,center,2,center,center,51);
+gradient.addColorStop(0,'rgba(5,9,12,.99)');
+gradient.addColorStop(.20,'rgba(22,26,28,.96)');
+gradient.addColorStop(.34,'rgba(76,80,78,.85)');
+gradient.addColorStop(.51,'rgba(196,192,180,.46)');
+gradient.addColorStop(.76,'rgba(42,49,53,.17)');
+gradient.addColorStop(1,'rgba(42,49,53,0)');
+drawing.fillStyle=gradient;drawing.beginPath();drawing.arc(center,center,51,0,Math.PI*2);drawing.fill();
+for(let index=0;index<12;index++){
+const angle=index*2*Math.PI/12+Math.random()*.30;
+const start=11+Math.random()*10,end=30+Math.random()*20;
+drawing.beginPath();
+drawing.moveTo(center+Math.cos(angle)*start,center+Math.sin(angle)*start);
+drawing.lineTo(center+Math.cos(angle+.12)*end,center+Math.sin(angle+.12)*end);
+drawing.lineWidth=.6+Math.random()*1.5;
+drawing.strokeStyle='rgba(18,29,38,'+(.12+Math.random()*.3)+')';
+drawing.stroke();
+}
+const texture=new THREE.CanvasTexture(canvas);
+texture.colorSpace=THREE.SRGBColorSpace;
+return texture;
+}
+const biathlonImpactTexture=makeBiathlonImpactTexture();
+const biathlonMarks=[];
+function attachBiathlonImpact(parent,localX,localY,localZ,size){
+const mark=new THREE.Mesh(new THREE.PlaneGeometry(size,size),
+new THREE.MeshBasicMaterial({map:biathlonImpactTexture,transparent:true,
+depthWrite:false,polygonOffset:true,polygonOffsetFactor:-3,side:THREE.DoubleSide}));
+mark.position.set(localX,localY,localZ);
+mark.rotation.z=Math.random()*Math.PI*2;
+parent.add(mark);
+biathlonMarks.push({parent,mark});
+if(biathlonMarks.length>120){
+const oldest=biathlonMarks.shift();
+oldest.parent.remove(oldest.mark);
+oldest.mark.material.dispose();
+}
+}
+function markBiathlonHit(target,worldPosition){
+target.group.updateWorldMatrix(true,false);
+const local=target.group.worldToLocal(worldPosition.clone());
+// On the swinging white indicator: bullet damage remains visible after closure.
+attachBiathlonImpact(target.cover,local.x,local.y,.025,.16);
+}
+function markBiathlonSteel(worldPosition){
+biathlonAssembly.updateWorldMatrix(true,false);
+const local=biathlonAssembly.worldToLocal(worldPosition.clone());
+attachBiathlonImpact(biathlonAssembly,local.x,local.y,
+local.z+.022,.17+Math.random()*.045);
+}
 let scorchTextureIndex=0;
 function addWallImpact(worldPosition){
 const texture=scorchTextures[scorchTextureIndex++%scorchTextures.length];
@@ -438,6 +495,8 @@ particle.mesh.scale.setScalar(0.026*(1-progress)+0.002);
 }
 }
 function resetWallMarks(){
+for(const {parent,mark} of biathlonMarks){parent.remove(mark);mark.material.dispose();}
+biathlonMarks.length=0;
 for(const decal of scorchMarks){scene.remove(decal);decal.material.dispose();}
 scorchMarks.length=0;
 for(const particle of splashParticles)scene.remove(particle.mesh);
@@ -660,7 +719,7 @@ target.sphere.material.emissiveIntensity=timestamp<target.flashUntil?0.6:0.0;
 }
 }
 function shoot(normalizedX,normalizedY){
-if(!gameActive)return;
+if(!gameActive||(gameMode==='biathlon'&&shotsFired>=5))return;
 if(!Number.isFinite(normalizedX)||!Number.isFinite(normalizedY)||normalizedX<0||normalizedX>1||normalizedY<0||normalizedY>1)return;
 // Use the target transforms from the LAST rendered frame. Do not move them
 // during the input event: the player must hit what was actually displayed.
@@ -683,8 +742,10 @@ target.flashUntil=performance.now()+150;
 hits++;
 score+=100;
 if(gameMode==='biathlon'){
+markBiathlonHit(target,intersection.point);
+playTone(1050,520,.09,.09,'triangle');
 target.closed=true;
-target.flashUntil=0; // White indicator closes this black aperture IN PLACE.
+target.flashUntil=0; // Steel indicator flips UP from the lower hinge.
 }else if(gameMode==='popups'){
 movePopupTarget(performance.now());
 }else if(gameMode==='ducks'){
@@ -694,19 +755,29 @@ showToast('+100',true);
 }else{
 misses++;
 playMissSound();
+if(gameMode==='biathlon'){
+const steelHit=raycaster.intersectObjects(biathlonAssembly.children,true)[0];
+if(steelHit){
+markBiathlonSteel(steelHit.point);
+playTone(520,240,.12,.09,'triangle');
+}
+}
 // Intersect the actual wall plane to place a persistent scorch mark.
 const wallIntersection=gameMode==='ducks'?null:raycaster.intersectObject(wall,false)[0];
 if(wallIntersection)addWallImpact(wallIntersection.point);
 showToast('Промах',false);
 }
 refreshHud();
-if(gameMode==='biathlon'&&shotsFired>=5)endGame();
+if(gameMode==='biathlon'&&shotsFired>=5){
+setTimeout(()=>{if(gameActive)endGame();},1050);
+}
 // Display the result in this input task rather than waiting for another animation frame.
 renderer.render(scene,camera);
 }
 function endGame(){
 if(!gameActive)return;
 gameActive=false;
+if(gameMode==='biathlon')biathlonPosture.disabled=false;
 document.getElementById('panelTitle').textContent='Раунд завершён';
 document.getElementById('panelDescription').textContent=
 (gameMode==='biathlon'?'Закрыто мишеней: '+hits+'/5. ':'')+
@@ -718,6 +789,7 @@ function startGame(){
 initializeAudio();
 resetWallMarks();
 score=0;hits=0;misses=0;shotsFired=0;refreshHud();
+if(gameMode==='biathlon')biathlonPosture.disabled=true;
 configureTargets(performance.now());
 gameActive=true;
 gameEndsAt=performance.now()+60000;
@@ -726,6 +798,9 @@ overlayElement.style.display='none';
 }
 document.getElementById('playButton').addEventListener('click',startGame);
 if(gameMode==='biathlon'){
+biathlonPosture.onchange=()=>{
+if(!gameActive)configureTargets(performance.now());
+};
 document.querySelector('#hud .metric:last-child small').textContent='Патроны';
 timerElement.textContent='5';
 }
@@ -800,7 +875,7 @@ if(gameActive){
 const remaining=gameMode==='biathlon'?Math.max(0,5-shotsFired):
 Math.max(0,Math.ceil((gameEndsAt-timestamp)/1000));
 timerElement.textContent=String(remaining);
-if(remaining===0)endGame();
+if(remaining===0&&gameMode!=='biathlon')endGame();
 }
 renderer.render(scene,camera);
 }

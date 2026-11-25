@@ -29,6 +29,11 @@ input[type=range]{width:100%;accent-color:#3dbaff}select,input[type=text]{width:
 <div id="hint"></div><div id="footer">Кадры: — | Обработка: — | Выстрелов: 0</div>
 <script type="module">
 const gameUrl='https://gooodwin67.github.io/laser/game/';
+const gameChannel=new BroadcastChannel('laser-lab-shots-v1');
+function announceDetector(){
+gameChannel.postMessage({type:'detector-status',running,source:'web',timestamp:Date.now()});
+}
+setInterval(announceDetector,1000);
 document.getElementById('gameButton').onclick=()=>window.open(gameUrl,'_blank','noopener,noreferrer');
 const video=document.getElementById('camera');
 const overlay=document.getElementById('overlay');
@@ -235,6 +240,10 @@ playShotSound();
 const raw={x:(best.x+0.5)/processingWidth,y:(best.y+0.5)/processingHeight};
 const mapped=mapPoint(raw);
 lastShot={raw,mapped,time:performance.now(),accepted:true};
+if(mapped&&Number.isFinite(mapped.x)&&Number.isFinite(mapped.y)){
+gameChannel.postMessage({type:'shot',x:mapped.x,y:mapped.y,
+timestamp:Date.now(),source:'web'});
+}
 if(zeroingStage===1||zeroingStage===2){displayHint('Последний выстрел №'+shots+' сохранён. Можешь стрелять ещё. Когда готов — щёлкни мышью по точке прицеливания.');zeroingStage=2;}
 }
 if(showMask){
@@ -278,6 +287,7 @@ cameraTrack=cameraStream.getVideoTracks()[0];
 video.srcObject=cameraStream;
 await video.play();
 running=true;runToken++;previousRed=null;lastFrameMediaTime=-1;
+announceDetector();
 const token=runToken;
 framesStart=performance.now();processedStart=framesStart;frameCounter=processedCounter=0;
 const settings=cameraTrack.getSettings();
@@ -289,6 +299,7 @@ else requestAnimationFrame(timestamp=>fallbackFrame(timestamp,token));
 }
 async function stopCamera(){
 running=false;runToken++;
+announceDetector();
 if(cameraStream){cameraStream.getTracks().forEach(track=>track.stop());cameraStream=null;}
 cameraTrack=null;video.srcObject=null;
 document.getElementById('cameraButton').textContent='▶ Камера';

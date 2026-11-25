@@ -9,6 +9,8 @@
 #include <windowsx.h>
 #include <commctrl.h>
 #include <wincrypt.h>
+#include <mmsystem.h>
+#include <shellapi.h>
 #include <opencv2/opencv.hpp>
 #include <algorithm>
 #include <atomic>
@@ -30,13 +32,15 @@
 #pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "shell32.lib")
 
 namespace {
 std::mutex socketMutex;
 SOCKET clientSocket = INVALID_SOCKET;
 std::atomic<bool> running{true};
 HWND previewWindow = nullptr;
-HWND toolbarButtons[5]={};
+HWND toolbarButtons[6]={};
 HWND presetButtons[5]={};
 HWND calibrateButton=nullptr,clearCalibrationButton=nullptr;
 HWND zeroButton=nullptr,clearZeroButton=nullptr;
@@ -44,7 +48,7 @@ HWND offsetXControl=nullptr,offsetYControl=nullptr,offsetXLabel=nullptr,offsetYL
 HWND settingsStatus=nullptr;
 HWND resolutionCombo=nullptr,fpsCombo=nullptr,resolutionLabel=nullptr,fpsLabel=nullptr;
 enum PanelView { NoPanel, PresetPanel, SettingsPanel, CalibrationPanel, ZeroPanel };
-enum UiButton { CameraButtonId=2100, PresetButtonId, SettingsButtonId, CalibrationButtonId, ZeroButtonId,
+enum UiButton { CameraButtonId=2100, PresetButtonId, SettingsButtonId, CalibrationButtonId, ZeroButtonId, GameButtonId,
 PresetOneId=2120,PresetTwoId,PresetThreeId,PresetSaveId,PresetLoadId,
 CalibrateId=2130,ClearCalibrationId,ZeroStartId,ZeroClearId,
 CameraResolutionId=2140,CameraFpsId,CameraModeApplyId };
@@ -158,7 +162,7 @@ void layoutPreviewControls(HWND window){
     SetWindowPos(focusAutomaticCheckbox,nullptr,sideLeft+12,560,160,22,SWP_NOZORDER);
     SetWindowPos(exposureAutomaticCheckbox,nullptr,sideLeft+182,560,170,22,SWP_NOZORDER);
     SetWindowPos(cameraStatusLabel,nullptr,sideLeft+12,594,340,70,SWP_NOZORDER);
-    for(int index=0;index<5;index++)
+    for(int index=0;index<6;index++)
         SetWindowPos(toolbarButtons[index],nullptr,12+index*128,7,122,34,SWP_NOZORDER);
     for(int index=0;index<5;index++){
         ShowWindow(presetButtons[index],activePanel==PresetPanel?SW_SHOW:SW_HIDE);
@@ -242,8 +246,8 @@ void createPreviewControls(HWND window) {
         WS_CHILD|WS_VISIBLE,0,0,400,22,window,nullptr,GetModuleHandleA(nullptr),nullptr);
     SendMessageA(focusAutomaticCheckbox,BM_SETCHECK,BST_CHECKED,0);
     SendMessageA(exposureAutomaticCheckbox,BM_SETCHECK,BST_CHECKED,0);
-    const char* buttonLabels[]={"Camera / Mask","Presets","Settings","Calibration","Zeroing"};
-    for(int index=0;index<5;index++)
+    const char* buttonLabels[]={"Camera / Mask","Presets","Settings","Calibration","Zeroing","Game"};
+    for(int index=0;index<6;index++)
         toolbarButtons[index]=CreateWindowExA(0,"BUTTON",buttonLabels[index],WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
         0,0,100,34,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(CameraButtonId+index)),
         GetModuleHandleA(nullptr),nullptr);
@@ -344,9 +348,13 @@ LRESULT CALLBACK previewWindowProcedure(HWND window, UINT message, WPARAM wordPa
         else if(clicked==SettingsButtonId)activePanel=activePanel==SettingsPanel?NoPanel:SettingsPanel;
         else if(clicked==CalibrationButtonId)activePanel=activePanel==CalibrationPanel?NoPanel:CalibrationPanel;
         else if(clicked==ZeroButtonId)activePanel=activePanel==ZeroPanel?NoPanel:ZeroPanel;
+        else if(clicked==GameButtonId){
+            ShellExecuteA(window,"open","https://gooodwin67.github.io/laser/game/",
+                          nullptr,nullptr,SW_SHOWNORMAL);
+        }
         else if(clicked==CalibrateId){cornerCount=0;calibrationStep=0;activePanel=NoPanel;}
         else if(clicked==ClearCalibrationId){cornerCount=0;calibrationStep=-1;persistCalibration();}
-        else if(clicked==ZeroStartId){zeroingStep=1;activePanel=NoPanel;}
+        else if(clicked==ZeroStartId){zeroingStep=1;lastLaserValid=false;activePanel=NoPanel;}
         else if(clicked==ZeroClearId){
             zeroOffsetX=0;zeroOffsetY=0;persistCalibration();
             if(offsetXControl)SendMessageA(offsetXControl,TBM_SETPOS,TRUE,0);
@@ -375,6 +383,13 @@ LRESULT CALLBACK previewWindowProcedure(HWND window, UINT message, WPARAM wordPa
         updateSliderLabels();
         return 0;
     }
+    if(message==WM_ERASEBKGND)return 1;
+    if(message==WM_PAINT){
+        PAINTSTRUCT paint={};
+        BeginPaint(window,&paint);
+        EndPaint(window,&paint);
+        return 0;
+    }
     if (message == WM_CLOSE) {
         DestroyWindow(window);
         return 0;
@@ -394,7 +409,7 @@ HWND createPreviewWindow() {
     windowClass.hInstance = GetModuleHandleA(nullptr);
     windowClass.lpszClassName = className;
     windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    windowClass.hbrBackground = nullptr;
     if (!RegisterClassA(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         return nullptr;
     }
@@ -449,8 +464,14 @@ void drawPreview(const cv::Mat& cameraFrame, const cv::Mat& detectionMask,
     bitmapInfo.bmiHeader.biPlanes=1;
     bitmapInfo.bmiHeader.biBitCount=32;
     bitmapInfo.bmiHeader.biCompression=BI_RGB;
-    HDC deviceContext=GetDC(previewWindow);
-    if(!deviceContext)return;
+    HDC windowContext=GetDC(previewWindow);
+    if(!windowContext)return;
+    HDC deviceContext=CreateCompatibleDC(windowContext);
+    if(!deviceContext){ReleaseDC(previewWindow,windowContext);return;}
+    HBITMAP backBuffer=CreateCompatibleBitmap(windowContext,width,height);
+    if(!backBuffer){DeleteDC(deviceContext);ReleaseDC(previewWindow,windowContext);return;}
+    HGDIOBJ oldBitmap=SelectObject(deviceContext,backBuffer);
+    // Compose the entire frame off-screen, then present it in ONE BitBlt.
     HBRUSH background=CreateSolidBrush(RGB(7,13,22));
     RECT backgroundRectangle={0,49,drawingWidth,height};
     FillRect(deviceContext,&backgroundRectangle,background);
@@ -486,12 +507,16 @@ void drawPreview(const cv::Mat& cameraFrame, const cv::Mat& detectionMask,
     SetTextColor(deviceContext,RGB(240,250,255));
     const std::string label=calibrationStep>=0
         ? "CALIBRATE: Click corner "+std::to_string(calibrationStep+1)+"/4 (TL, TR, BR, BL)"
-        : zeroingStep==1?"ZEROING: Fire the laser at the target"
-        : zeroingStep==2?"ZEROING: Click the intended target position"
+        : zeroingStep==1?"ZEROING: Shoot the target. Several shots are allowed."
+        : zeroingStep==2?"ZEROING: Shoot again or click intended aim point (latest shot used)"
         : maskView?"DETECTION MASK - white pixels are candidates"
         :"CAMERA - Presets / Settings / Calibration / Zeroing";
     TextOutA(deviceContext,12,54,label.c_str(),static_cast<int>(label.size()));
-    ReleaseDC(previewWindow, deviceContext);
+    BitBlt(windowContext,0,49,width,height-49,deviceContext,0,49,SRCCOPY);
+    SelectObject(deviceContext,oldBitmap);
+    DeleteObject(backBuffer);
+    DeleteDC(deviceContext);
+    ReleaseDC(previewWindow,windowContext);
 }
 
 
@@ -879,7 +904,7 @@ int main(int argc, char** argv) {
                         lastLaserRaw=rawPoint;
                         lastLaserCorrected=mappedPoint;
                         lastLaserValid=true;
-                        if(zeroingStep==1)zeroingStep=2;
+                        if(zeroingStep==1||zeroingStep==2)zeroingStep=2;
                         shotCount++;
                         lastShotTime = capturedAt;
                         std::cout << "Shot " << shotCount

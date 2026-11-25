@@ -711,7 +711,7 @@ int main(int argc, char** argv) {
                     }
                 }
             }else{
-                const int presets[3][4]={{141,90,30,2},{205,40,20,2},{135,40,16,1}};
+                const int presets[3][4]={{141,136,46,1},{205,40,20,2},{135,40,16,1}};
                 for(int settingIndex=0;settingIndex<4;settingIndex++)
                     SendMessageA(sliders[settingIndex].trackbar,TBM_SETPOS,TRUE,presets[index][settingIndex]);
             }

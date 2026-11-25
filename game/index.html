@@ -305,34 +305,34 @@ const backing=new THREE.Mesh(new THREE.CylinderGeometry(0.94,0.94,0.09,64),
 new THREE.MeshStandardMaterial({color:0x596371,metalness:0.77,roughness:0.42}));
 backing.rotation.x=Math.PI/2;backing.position.z=-0.08;group.add(backing);
 // Matte black aiming openings embedded in the common white panel.
-const aperture=new THREE.Mesh(new THREE.CircleGeometry(.70,80),
+const aperture=new THREE.Mesh(new THREE.CircleGeometry(.54,80),
 new THREE.MeshStandardMaterial({color:0x080b0d,metalness:.18,roughness:.9,
 side:THREE.DoubleSide}));
 aperture.position.z=.22;
 group.add(aperture);
 // Prone retains a 115 mm aiming circle but scores only within 45 mm.
-const proneCollider=new THREE.Mesh(new THREE.CircleGeometry(.70*45/115,64),
+const proneCollider=new THREE.Mesh(new THREE.CircleGeometry(.54*45/115,64),
 new THREE.MeshBasicMaterial({color:0x101417,side:THREE.DoubleSide}));
 proneCollider.position.z=.254;
 group.add(proneCollider);
 const proneBoundary=new THREE.Mesh(
-new THREE.RingGeometry(.70*45/115,.70*45/115+.012,64),
+new THREE.RingGeometry(.54*45/115,.54*45/115+.012,64),
 new THREE.MeshBasicMaterial({color:0x55606a,side:THREE.DoubleSide}));
 proneBoundary.position.z=.261;group.add(proneBoundary);
 // Realistic lower-pivot white knock-down indicator: folded flat at bottom,
 // rotates up around horizontal hinge until covering the SAME black aperture.
 const hinge=new THREE.Group();
-hinge.position.set(0,-.705,.32);
+hinge.position.set(0,-.545,.32);
 hinge.rotation.x=-Math.PI/2;
-const cover=new THREE.Mesh(new THREE.CircleGeometry(.705,80),
+const cover=new THREE.Mesh(new THREE.CircleGeometry(.545,80),
 new THREE.MeshStandardMaterial({color:0xe8eeed,metalness:.42,roughness:.43,
 side:THREE.DoubleSide}));
-cover.position.set(0,.705,0);
+cover.position.set(0,.545,0);
 hinge.add(cover);group.add(hinge);
 const hingeAxle=new THREE.Mesh(new THREE.CylinderGeometry(.045,.045,.30,16),
 new THREE.MeshStandardMaterial({color:0x60737a,metalness:.88,roughness:.26}));
 hingeAxle.rotation.z=Math.PI/2;
-hingeAxle.position.set(0,-.75,.33);group.add(hingeAxle);
+hingeAxle.position.set(0,-.59,.33);group.add(hingeAxle);
 // Keep old per-target metal components only for non-biathlon modes.
 const plate=new THREE.Mesh(new THREE.RingGeometry(.70,.90,64),
 new THREE.MeshStandardMaterial({color:0xc6d1d4,metalness:.7,roughness:.35,

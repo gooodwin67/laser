@@ -40,6 +40,7 @@ HWND toolbarButtons[5]={};
 HWND presetButtons[5]={};
 HWND calibrateButton=nullptr,clearCalibrationButton=nullptr;
 HWND zeroButton=nullptr,clearZeroButton=nullptr;
+HWND offsetXControl=nullptr,offsetYControl=nullptr,offsetXLabel=nullptr,offsetYLabel=nullptr;
 HWND settingsStatus=nullptr;
 enum PanelView { NoPanel, PresetPanel, SettingsPanel, CalibrationPanel, ZeroPanel };
 enum UiButton { CameraButtonId=2100, PresetButtonId, SettingsButtonId, CalibrationButtonId, ZeroButtonId,
@@ -108,6 +109,7 @@ bool correctedPoint(const cv::Point2f& raw,cv::Point2f& corrected){
 }
 void updateLayout(HWND window);
 void updatePanels();
+void updateZeroLabels();
 
 enum ControlId {
     BrightnessControl=2001, RedDifferenceControl, RedRiseControl, SpotAreaControl,
@@ -169,8 +171,22 @@ void layoutPreviewControls(HWND window){
         ShowWindow(button,activePanel==ZeroPanel?SW_SHOW:SW_HIDE);
     SetWindowPos(zeroButton,nullptr,sideLeft+12,70,330,43,SWP_NOZORDER);
     SetWindowPos(clearZeroButton,nullptr,sideLeft+12,126,330,43,SWP_NOZORDER);
+    for(HWND control:{offsetXControl,offsetYControl,offsetXLabel,offsetYLabel})
+        ShowWindow(control,activePanel==ZeroPanel?SW_SHOW:SW_HIDE);
+    SetWindowPos(offsetXLabel,nullptr,sideLeft+12,194,330,22,SWP_NOZORDER);
+    SetWindowPos(offsetXControl,nullptr,sideLeft+12,220,330,35,SWP_NOZORDER);
+    SetWindowPos(offsetYLabel,nullptr,sideLeft+12,270,330,22,SWP_NOZORDER);
+    SetWindowPos(offsetYControl,nullptr,sideLeft+12,296,330,35,SWP_NOZORDER);
     ShowWindow(settingsStatus,activePanel==NoPanel?SW_HIDE:SW_SHOW);
     SetWindowPos(settingsStatus,nullptr,sideLeft+12,activePanel==SettingsPanel?680:210,340,100,SWP_NOZORDER);
+}
+void updateZeroLabels(){
+    if(!offsetXLabel||!offsetYLabel)return;
+    std::ostringstream horizontal,vertical;
+    horizontal << "Offset X: " << std::fixed << std::setprecision(3) << zeroOffsetX << " (left / right)";
+    vertical << "Offset Y: " << std::fixed << std::setprecision(3) << zeroOffsetY << " (up / down)";
+    SetWindowTextA(offsetXLabel,horizontal.str().c_str());
+    SetWindowTextA(offsetYLabel,vertical.str().c_str());
 }
 void updatePanels(){
     if(previewWindow)layoutPreviewControls(previewWindow);
@@ -236,6 +252,21 @@ void createPreviewControls(HWND window) {
         0,0,200,40,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(ZeroStartId)),GetModuleHandleA(nullptr),nullptr);
     clearZeroButton=CreateWindowExA(0,"BUTTON","Clear zeroing offset",WS_CHILD|BS_PUSHBUTTON,
         0,0,200,40,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(ZeroClearId)),GetModuleHandleA(nullptr),nullptr);
+    offsetXLabel=CreateWindowExA(0,"STATIC","Offset X",WS_CHILD|SS_LEFT,
+        0,0,330,22,window,nullptr,GetModuleHandleA(nullptr),nullptr);
+    offsetYLabel=CreateWindowExA(0,"STATIC","Offset Y",WS_CHILD|SS_LEFT,
+        0,0,330,22,window,nullptr,GetModuleHandleA(nullptr),nullptr);
+    offsetXControl=CreateWindowExA(0,TRACKBAR_CLASSA,"",WS_CHILD|TBS_HORZ|TBS_NOTICKS,
+        0,0,330,35,window,nullptr,GetModuleHandleA(nullptr),nullptr);
+    offsetYControl=CreateWindowExA(0,TRACKBAR_CLASSA,"",WS_CHILD|TBS_HORZ|TBS_NOTICKS,
+        0,0,330,35,window,nullptr,GetModuleHandleA(nullptr),nullptr);
+    for(HWND control:{offsetXControl,offsetYControl}){
+        SendMessageA(control,TBM_SETRANGEMIN,FALSE,-500);
+        SendMessageA(control,TBM_SETRANGEMAX,TRUE,500);
+    }
+    SendMessageA(offsetXControl,TBM_SETPOS,TRUE,static_cast<LPARAM>(std::lround(zeroOffsetX*1000)));
+    SendMessageA(offsetYControl,TBM_SETPOS,TRUE,static_cast<LPARAM>(std::lround(zeroOffsetY*1000)));
+    updateZeroLabels();
     settingsStatus=CreateWindowExA(0,"STATIC","",WS_CHILD|SS_LEFT,
         0,0,320,70,window,nullptr,GetModuleHandleA(nullptr),nullptr);
     updateSliderLabels();
@@ -275,7 +306,10 @@ LRESULT CALLBACK previewWindowProcedure(HWND window, UINT message, WPARAM wordPa
                 zeroOffsetY+=wanted.y-lastLaserCorrected.y;
                 persistCalibration();
             }
-            zeroingStep=0;activePanel=ZeroPanel;updatePanels();
+            zeroingStep=0;activePanel=ZeroPanel;
+            if(offsetXControl)SendMessageA(offsetXControl,TBM_SETPOS,TRUE,static_cast<LPARAM>(std::lround(zeroOffsetX*1000)));
+            if(offsetYControl)SendMessageA(offsetYControl,TBM_SETPOS,TRUE,static_cast<LPARAM>(std::lround(zeroOffsetY*1000)));
+            updateZeroLabels();updatePanels();
         }
         return 0;
     }
@@ -289,7 +323,12 @@ LRESULT CALLBACK previewWindowProcedure(HWND window, UINT message, WPARAM wordPa
         else if(clicked==CalibrateId){cornerCount=0;calibrationStep=0;activePanel=NoPanel;}
         else if(clicked==ClearCalibrationId){cornerCount=0;calibrationStep=-1;persistCalibration();}
         else if(clicked==ZeroStartId){zeroingStep=1;activePanel=NoPanel;}
-        else if(clicked==ZeroClearId){zeroOffsetX=0;zeroOffsetY=0;persistCalibration();}
+        else if(clicked==ZeroClearId){
+            zeroOffsetX=0;zeroOffsetY=0;persistCalibration();
+            if(offsetXControl)SendMessageA(offsetXControl,TBM_SETPOS,TRUE,0);
+            if(offsetYControl)SendMessageA(offsetYControl,TBM_SETPOS,TRUE,0);
+            updateZeroLabels();
+        }
         else if(clicked>=PresetOneId&&clicked<=PresetLoadId)uiAction=clicked;
         updatePanels();
         return 0;
@@ -300,6 +339,13 @@ LRESULT CALLBACK previewWindowProcedure(HWND window, UINT message, WPARAM wordPa
         return 0;
     }
     if(message==WM_HSCROLL){
+        if(reinterpret_cast<HWND>(longParameter)==offsetXControl ||
+           reinterpret_cast<HWND>(longParameter)==offsetYControl){
+            zeroOffsetX=static_cast<double>(SendMessageA(offsetXControl,TBM_GETPOS,0,0))/1000;
+            zeroOffsetY=static_cast<double>(SendMessageA(offsetYControl,TBM_GETPOS,0,0))/1000;
+            persistCalibration();
+            updateZeroLabels();
+        }
         updateSliderLabels();
         return 0;
     }

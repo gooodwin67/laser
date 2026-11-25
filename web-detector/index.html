@@ -24,10 +24,12 @@ input[type=range]{width:100%;accent-color:#3dbaff}select,input[type=text]{width:
 </head>
 <body>
 <video id="camera" autoplay playsinline muted></video><canvas id="overlay"></canvas><canvas id="mask"></canvas>
-<div id="toolbar"><button id="cameraButton">▶ Камера</button><button data-menu="presets">Пресеты</button><button data-menu="settings">Настройки</button><button data-menu="calibration">Калибровка</button><button data-menu="zeroing">Пристрелка</button><button id="showMask">Маска</button><span id="status">Камера выключена</span></div>
+<div id="toolbar"><button id="cameraButton">▶ Камера</button><button data-menu="presets">Пресеты</button><button data-menu="settings">Настройки</button><button data-menu="calibration">Калибровка</button><button data-menu="zeroing">Пристрелка</button><button id="showMask">Маска</button><button id="gameButton">🎮 Игра</button><span id="status">Камера выключена</span></div>
 <section id="panel" hidden><h2 id="panelTitle"></h2><div id="panelContent"></div></section>
 <div id="hint"></div><div id="footer">Кадры: — | Обработка: — | Выстрелов: 0</div>
 <script type="module">
+const gameUrl='https://gooodwin67.github.io/laser/game/';
+document.getElementById('gameButton').onclick=()=>window.open(gameUrl,'_blank','noopener,noreferrer');
 const video=document.getElementById('camera');
 const overlay=document.getElementById('overlay');
 const context=overlay.getContext('2d');
@@ -53,6 +55,43 @@ let running=false,runToken=0,frameCounter=0,processedCounter=0,shots=0;
 let framesStart=performance.now(),processedStart=performance.now(),cameraFps=0,processedFps=0;
 let lastShotTime=-Infinity,lastShot=null,activePanel='',calibrationStage=-1,zeroingStage=0,showMask=config.mask;
 let lastFrameMediaTime=-1;
+let soundContext=null;
+let shotNoiseBuffer=null;
+function unlockSound(){
+try{
+if(!soundContext){
+soundContext=new (window.AudioContext||window.webkitAudioContext)();
+shotNoiseBuffer=soundContext.createBuffer(1,Math.round(soundContext.sampleRate*0.12),soundContext.sampleRate);
+const channel=shotNoiseBuffer.getChannelData(0);
+for(let sampleIndex=0;sampleIndex<channel.length;sampleIndex++)
+channel[sampleIndex]=(Math.random()*2-1)*Math.pow(1-sampleIndex/channel.length,2);
+}
+if(soundContext.state==='suspended')soundContext.resume().catch(()=>{});
+}catch(error){console.warn('Cannot initialize sound',error);}
+}
+function playShotSound(){
+if(!soundContext||soundContext.state!=='running'||!shotNoiseBuffer)return;
+const startedAt=soundContext.currentTime;
+const noise=soundContext.createBufferSource();
+noise.buffer=shotNoiseBuffer;
+const lowpass=soundContext.createBiquadFilter();
+lowpass.type='lowpass';lowpass.frequency.value=1900;
+const volume=soundContext.createGain();
+volume.gain.setValueAtTime(0.17,startedAt);
+volume.gain.exponentialRampToValueAtTime(0.0001,startedAt+0.11);
+noise.connect(lowpass).connect(volume).connect(soundContext.destination);
+noise.start(startedAt);noise.stop(startedAt+0.12);
+const tone=soundContext.createOscillator();
+const toneGain=soundContext.createGain();
+tone.type='triangle';
+tone.frequency.setValueAtTime(175,startedAt);
+tone.frequency.exponentialRampToValueAtTime(55,startedAt+0.10);
+toneGain.gain.setValueAtTime(0.14,startedAt);
+toneGain.gain.exponentialRampToValueAtTime(0.0001,startedAt+0.11);
+tone.connect(toneGain).connect(soundContext.destination);
+tone.start(startedAt);tone.stop(startedAt+0.12);
+}
+document.addEventListener('pointerdown',unlockSound,{once:true});
 const save=()=>localStorage.setItem(storageKey,JSON.stringify(config));
 const clamp=(value,low,high)=>Math.max(low,Math.min(high,value));
 const percent=value=>(value*100).toFixed(1)+'%';
@@ -192,10 +231,11 @@ if(count>=config.spotPixels&&count<=config.maxSpotPixels&&(!best||count>best.cou
 }
 if(best&&timestamp-lastShotTime>=config.debounce){
 lastShotTime=timestamp;shots++;
+playShotSound();
 const raw={x:(best.x+0.5)/processingWidth,y:(best.y+0.5)/processingHeight};
 const mapped=mapPoint(raw);
 lastShot={raw,mapped,time:performance.now(),accepted:true};
-if(zeroingStage===1){displayHint('Выстрел захвачен. Теперь щёлкни мышью по точке, куда целился.');zeroingStage=2;}
+if(zeroingStage===1||zeroingStage===2){displayHint('Последний выстрел №'+shots+' сохранён. Можешь стрелять ещё. Когда готов — щёлкни мышью по точке прицеливания.');zeroingStage=2;}
 }
 if(showMask){
 const output=maskContext.createImageData(processingWidth,processingHeight);
@@ -303,10 +343,10 @@ panelContent.innerHTML='<p>Камера должна видеть всю про�
 document.getElementById('calibrate').onclick=()=>{config.corners=[];calibrationStage=0;displayHint('Укажи мышью верхний левый угол проекции (1/4)');panel.hidden=true;};
 document.getElementById('clearCalibration').onclick=()=>{config.corners=[];calibrationStage=-1;save();openPanel('settings');openPanel('calibration');};
 }else if(name==='zeroing'){
-panelContent.innerHTML='<p>После калибровки сделай один лазерный выстрел в известную точку. Затем мышью укажи, куда целился. Поправка применяется ко всем последующим координатам.</p><div class="inline"><button id="startZeroing">Пристрелять</button><button id="resetZeroing">Сбросить офсет</button></div><p>Офсет X: '+config.offsetX.toFixed(4)+' | Y: '+config.offsetY.toFixed(4)+'</p>'+
+panelContent.innerHTML='<p>После калибровки стреляй по контрольной точке сколько нужно. При каждом обнаружении сохраняется последний выстрел. Когда получишь подходящий — щёлкни мышью по точке прицеливания. Офсет рассчитывается по последнему выстрелу.</p><div class="inline"><button id="startZeroing">Пристрелять</button><button id="resetZeroing">Сбросить офсет</button></div><p>Офсет X: '+config.offsetX.toFixed(4)+' | Y: '+config.offsetY.toFixed(4)+'</p>'+
 setting('Офсет X','offsetX',-0.5,0.5,0.001,'Поправка по горизонтали в долях ширины игрового экрана.')+
 setting('Офсет Y','offsetY',-0.5,0.5,0.001,'Поправка по вертикали в долях высоты игрового экрана.');
-document.getElementById('startZeroing').onclick=()=>{zeroingStage=1;panel.hidden=true;displayHint('Выстрели лазером в выбранную точку, затем укажи её мышью.');};
+document.getElementById('startZeroing').onclick=()=>{zeroingStage=1;panel.hidden=true;displayHint('Можешь сделать несколько выстрелов. После последнего щёлкни мышью по точке прицеливания.');};
 document.getElementById('resetZeroing').onclick=()=>{config.offsetX=0;config.offsetY=0;save();openPanel('settings');openPanel('zeroing');};
 }
 panelContent.querySelectorAll('[data-key]').forEach(element=>element.addEventListener('input',()=>{

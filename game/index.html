@@ -185,7 +185,7 @@ object.scale.set(...radii);object.position.set(...position);parent.add(object);r
 }
 const duckBody=ellipsoid(duck,[0.88,0.34,0.35],plumage,[0,0,0]);
 ellipsoid(duck,[0.55,.23,.31],cream,[.1,-.14,.04]);
-ellipsoid(duck,[.27,.29,.28],darker,[.7,.20,0]);
+const duckHead=ellipsoid(duck,[.27,.29,.28],darker,[.7,.20,0]);
 const beak=new THREE.Mesh(new THREE.ConeGeometry(.15,.33,12),billMaterial);
 beak.rotation.z=-Math.PI/2;beak.position.set(1.0,.16,0);duck.add(beak);
 ellipsoid(duck,[.052,.052,.045],new THREE.MeshBasicMaterial({color:0x10171b}),[.82,.28,.25]);
@@ -196,7 +196,8 @@ const tail=new THREE.Mesh(new THREE.ConeGeometry(.23,.44,12),darker);
 tail.rotation.z=-Math.PI/2;tail.position.set(-.95,.09,0);duck.add(tail);
 duck.visible=false;group.add(duck);
 scene.add(group);
-targets.push({group,sphere,ring,index,flashUntil:0,closed:false,cover,aperture,plate,stand,duck,
+targets.push({group,sphere,ring,backing,index,flashUntil:0,closed:false,cover,aperture,plate,stand,duck,
+duckMeshes:[duckBody,duckHead,leftWing,rightWing],
 duckBody,leftWing,rightWing,closure:0,duckDirection:index%2?1:-1,duckSpeed:1.2});
 }
 // Permanent scorch decals are in world space, behind the moving targets.
@@ -393,6 +394,7 @@ for(const target of targets){
 target.group.visible=false;target.closed=false;target.closure=0;
 target.sphere.visible=false;
 target.ring.visible=false;
+target.backing.visible=false;
 target.aperture.visible=false;
 target.cover.visible=false;
 target.plate.visible=false;
@@ -406,7 +408,7 @@ target.group.scale.setScalar(1);
 if(gameMode==='arcade'){
 for(let index=0;index<3;index++){
 const target=targets[index];target.group.visible=true;
-target.sphere.visible=true;target.ring.visible=true;
+target.sphere.visible=true;target.ring.visible=true;target.backing.visible=true;
 }
 }else if(gameMode==='biathlon'){
 const visibleHalfWidth=Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.position.z*camera.aspect;
@@ -415,12 +417,12 @@ for(const target of targets){
 target.group.visible=true;
 target.group.scale.setScalar(Math.min(.72,gap*.55));
 target.group.position.set((target.index-2)*gap,0,0);
-target.aperture.visible=true;target.plate.visible=true;target.cover.visible=true;
+target.aperture.visible=true;target.plate.visible=true;target.cover.visible=true;target.backing.visible=true;
 target.stand.visible=true;
 }
 }else if(gameMode==='popups'){
 const target=targets[0];
-target.group.visible=true;target.sphere.visible=true;target.ring.visible=true;
+target.group.visible=true;target.sphere.visible=true;target.ring.visible=true;target.backing.visible=true;
 movePopupTarget(timestamp);
 }else if(gameMode==='ducks'){
 for(let index=0;index<3;index++){
@@ -506,15 +508,17 @@ if(!Number.isFinite(normalizedX)||!Number.isFinite(normalizedY)||normalizedX<0||
 pointer.set(normalizedX*2-1,1-normalizedY*2);
 raycaster.setFromCamera(pointer,camera);
 const activeTargets=targets.filter(target=>target.group.visible&&!target.closed);
-const colliderFor=target=>gameMode==='ducks'?target.duckBody:
-gameMode==='biathlon'?target.aperture:target.sphere;
-const intersection=raycaster.intersectObjects(activeTargets.map(colliderFor),false)[0];
+const colliderFor=target=>gameMode==='biathlon'?target.aperture:target.sphere;
+const possibleColliders=gameMode==='ducks'
+?activeTargets.flatMap(target=>target.duckMeshes)
+:activeTargets.map(colliderFor);
+const intersection=raycaster.intersectObjects(possibleColliders,false)[0];
 shotsFired++;
 playShotSound();
 if(intersection){
 // Hits never produce a wall stain; the sphere itself flashes.
 playHitSound();
-const target=targets.find(item=>colliderFor(item)===intersection.object);
+const target=targets.find(item=>gameMode==='ducks'?item.duckMeshes.includes(intersection.object):colliderFor(item)===intersection.object);
 target.flashUntil=performance.now()+150;
 hits++;
 score+=100;

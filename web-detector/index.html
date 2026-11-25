@@ -44,6 +44,7 @@ background:#0c1d2df6;border:1px solid #437c9b;padding:12px;border-radius:11px;bo
 <button data-game="arcade">🎯 Laser Arcade — движущиеся шары</button>
 <button data-game="biathlon">🏅 Биатлон — 5 мишеней, 5 выстрелов</button>
 <button data-game="popups">⚡ Быстрые мишени — в случайных местах</button>
+<button data-game="ducks">🦆 Утиная заводь — озеро и летящие утки</button>
 </section>
 <section id="panel" hidden><h2 id="panelTitle"></h2><div id="panelContent"></div></section>
 <div id="hint"></div><div id="footer">Кадры: — | Обработка: — | Выстрелов: 0</div>
@@ -64,7 +65,7 @@ gameChoice.hidden=true;
 embeddedGame.src='about:blank';
 }
 function launchGame(selectedMode){
-if(!['arcade','biathlon','popups'].includes(selectedMode))return;
+if(!['arcade','biathlon','popups','ducks'].includes(selectedMode))return;
 gameChoice.hidden=true;
 panel.hidden=true;
 activePanel='';

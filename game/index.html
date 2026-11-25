@@ -468,7 +468,7 @@ toastElement.classList.add('visible');
 clearTimeout(toastTimer);
 toastTimer=setTimeout(()=>toastElement.classList.remove('visible'),260);
 }
-function updateTargets(seconds){
+function updateTargets(seconds,deltaSeconds){
 const timestamp=performance.now();
 if(gameMode==='arcade'){
 const aspect=Math.max(0.65,Math.min(2.4,camera.aspect));
@@ -483,7 +483,7 @@ const halfWidth=Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.position
 for(let index=0;index<3;index++){
 const target=targets[index];
 target.group.position.x+=target.duckDirection*target.duckSpeed*
-Math.min(.05,Math.max(0,(timestamp-lastFrameTimestamp)/1000));
+deltaSeconds;
 target.group.position.y+=Math.sin(seconds*4.3+index*1.8)*.006;
 target.leftWing.rotation.z=.24+Math.sin(seconds*12+index)*.48;
 target.rightWing.rotation.z=-.24-Math.sin(seconds*12+index)*.48;
@@ -492,7 +492,7 @@ if(Math.abs(target.group.position.x)>halfWidth+1.8)resetDuck(target,index);
 }
 for(const target of targets){
 if(gameMode==='biathlon'){
-target.closure+=(Number(target.closed)-target.closure)*Math.min(1,(timestamp-lastFrameTimestamp)/140);
+target.closure+=(Number(target.closed)-target.closure)*Math.min(1,deltaSeconds*7.5);
 target.cover.position.x=-1.5*(1-target.closure);
 }
 target.sphere.material.emissiveIntensity=timestamp<target.flashUntil?0.6:0.0;
@@ -630,7 +630,7 @@ requestAnimationFrame(animate);
 const deltaSeconds=Math.min(0.05,Math.max(0,(timestamp-lastFrameTimestamp)/1000));
 lastFrameTimestamp=timestamp;
 const seconds=timestamp/1000;
-updateTargets(seconds);
+updateTargets(seconds,deltaSeconds);
 updateWallParticles(timestamp,deltaSeconds);
 if(gameActive){
 const remaining=gameMode==='biathlon'?Math.max(0,5-shotsFired):

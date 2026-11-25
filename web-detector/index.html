@@ -7,7 +7,7 @@
 :root{font:14px system-ui,Arial,sans-serif;color:#e8f2ff;color-scheme:dark}
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#05080e}
 #camera,#overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}#camera{background:#020409}#overlay{pointer-events:auto;cursor:crosshair}
-#camera.hidden{opacity:0}#mask{display:none}
+#camera.hidden{opacity:0}#mask{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;display:none}
 #toolbar{position:fixed;top:12px;left:12px;right:12px;display:flex;gap:7px;flex-wrap:wrap;z-index:2;pointer-events:none}
 button{font:inherit;background:#182a3bea;color:#effaff;border:1px solid #43617b;border-radius:9px;padding:9px 13px;cursor:pointer;pointer-events:auto}
 button:hover{background:#29445c}button.active{border-color:#50c9ff;background:#1a4d64}
@@ -202,13 +202,12 @@ const value=activeMask[index]?255:0;
 output.data[index*4]=value;output.data[index*4+1]=value;output.data[index*4+2]=value;output.data[index*4+3]=255;
 }
 maskContext.putImageData(output,0,0);
-const image=maskCanvas.toDataURL('image/png');
+maskCanvas.style.display='block';
 video.style.opacity='0';
-overlay.style.backgroundImage='url('+image+')';
-overlay.style.backgroundSize='contain';
-overlay.style.backgroundPosition='center';
-overlay.style.backgroundRepeat='no-repeat';
-}else{video.style.opacity='1';overlay.style.backgroundImage='none';}
+}else{
+video.style.opacity='1';
+maskCanvas.style.display='none';
+}
 processedCounter++;
 if(timestamp-processedStart>1000){processedFps=processedCounter*1000/(timestamp-processedStart);processedCounter=0;processedStart=timestamp;}
 showFooter();
@@ -237,12 +236,13 @@ cameraTrack=cameraStream.getVideoTracks()[0];
 video.srcObject=cameraStream;
 await video.play();
 running=true;runToken++;previousRed=null;lastFrameMediaTime=-1;
+const token=runToken;
 framesStart=performance.now();processedStart=framesStart;frameCounter=processedCounter=0;
 const settings=cameraTrack.getSettings();
 statusElement.textContent=settings.width+'×'+settings.height+' / '+(settings.frameRate||'?')+' FPS';
 document.getElementById('cameraButton').textContent='■ Стоп';
-if(video.requestVideoFrameCallback)video.requestVideoFrameCallback((timestamp,metadata)=>onVideoFrame(timestamp,metadata,runToken));
-else requestAnimationFrame(timestamp=>fallbackFrame(timestamp,runToken));
+if(video.requestVideoFrameCallback)video.requestVideoFrameCallback((timestamp,metadata)=>onVideoFrame(timestamp,metadata,token));
+else requestAnimationFrame(timestamp=>fallbackFrame(timestamp,token));
 }catch(error){statusElement.textContent='Ошибка: '+error.message;}
 }
 async function stopCamera(){
@@ -332,7 +332,17 @@ wrapper.textContent=title+' ('+range.min+'…'+range.max+')';
 const control=document.createElement('input');
 control.type='range';control.min=range.min;control.max=range.max;
 control.step=range.step||0.001;control.value=settings[property]??range.min;
-const modes=capabilities[property==='focusDistance'?'focusMode':'exposureMode']||[];
+const modeProperty=property==='focusDistance'?'focusMode':'exposureMode';
+const modes=capabilities[modeProperty]||[];
+if(modes.includes('continuous')){
+const automatic=document.createElement('button');
+automatic.textContent='Автоматический '+title.toLowerCase();
+automatic.onclick=async()=>{
+try{await cameraTrack.applyConstraints({advanced:[{[modeProperty]:'continuous'}]});label.textContent='Автоматический '+title.toLowerCase()+' включён';}
+catch(error){label.textContent='Драйвер отклонил настройку: '+error.message;}
+};
+target.appendChild(automatic);
+}
 if(!modes.includes('manual')){control.disabled=true;wrapper.title='Ручной режим недоступен';}
 control.onchange=async()=>{
 const constraints=property==='focusDistance'?

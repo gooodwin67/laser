@@ -4,6 +4,56 @@ This branch is **independent of the working GitHub Pages detector**.
 **Do not merge into main yet.** The existing `index.html` on main and the published
 `https://gooodwin67.github.io/laser/` remain unchanged.
 
+## Two separate camera applications
+
+The old browser Laser Lab on `main` stays unchanged. This experimental branch
+contains two new camera applications and a separate Three.js test game.
+
+### Windows native: `laser-core.exe`
+
+The application shows the camera over the available window area, with a compact
+top toolbar:
+
+- **Camera / Mask** switches between the camera picture and detector mask
+- **Presets** provides three trial detector configurations and separate **Save**
+  / **Load User Preset** buttons
+- **Settings** opens brightness, red excess, temporal change, spot size, focus,
+  exposure, autofocus and autoexposure controls with short descriptions
+- **Calibration**: click **Select four corners**, then click the image corners
+  **top-left → top-right → bottom-right → bottom-left**, as visible in the
+  camera image. They map to the corners of the projected game screen.
+- **Zeroing**: select **Shoot, then click target**, fire once, and click on the
+  camera image at the point you *intended* to hit. This calculates X/Y offsets.
+  Two sliders allow manual adjustments afterward.
+
+Windows preferences and calibration are kept in `laser-core.ini` beside the
+EXE. Keep this file if replacing the executable. Presets are experimental
+starting points, not camera-specific guarantees.
+
+Until four-point calibration is complete, the native app sends raw normalized
+camera coordinates. After calibration it sends game-screen coordinates,
+including X/Y zeroing offsets, to `ws://127.0.0.1:8765`.
+
+### Browser: `web-detector/index.html`
+
+Download and open in Chrome/Edge, or serve from a secure HTTPS origin.
+The browser needs camera permission. Everything related to the camera is
+handled by browser APIs (no native EXE required).
+
+The browser camera fills the available screen, and its toolbar provides
+Presets, Settings, Calibration, Zeroing and a mask preview. Personal settings,
+calibration and presets are saved in that browser's localStorage.
+
+The browser detector has its own coordinate mapping and spot detection. It
+currently runs standalone as a diagnostic app; the native WebSocket output to
+`game/index.html` belongs to the Windows variant. It does not automatically
+send shots to the Three.js test game yet.
+
+Both versions use four source points (as seen through the camera) mapped to
+the normalized corners of the projected screen, with offsets applied afterward.
+The four points require a visible, stable projected rectangle. Neither version
+can recover a laser pulse that did not appear in any captured camera frame.
+
 ## Components
 
 - `core/main.cpp` — native Windows USB camera capture with DirectShow + OpenCV,

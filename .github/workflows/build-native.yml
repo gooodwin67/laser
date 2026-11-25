@@ -5,6 +5,8 @@ on:
     branches: [native-core]
     paths:
       - 'core/**'
+      - 'web-detector/**'
+      - 'game/**'
       - '.github/workflows/build-native.yml'
   workflow_dispatch:
 

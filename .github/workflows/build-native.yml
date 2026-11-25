@@ -54,6 +54,10 @@ jobs:
           Copy-Item build/native/Release/laser-core.exe package/
           Get-ChildItem "build/native/Release" -Filter *.dll | Copy-Item -Destination package/
           Copy-Item NATIVE-CORE.md package/README.md
+          New-Item -ItemType Directory -Force -Path package/web-detector | Out-Null
+          Copy-Item web-detector/index.html package/web-detector/index.html
+          New-Item -ItemType Directory -Force -Path package/game | Out-Null
+          Copy-Item game/index.html package/game/index.html
 
       - name: Upload Windows ZIP
         uses: actions/upload-artifact@v4

@@ -520,6 +520,50 @@ void drawPreview(const cv::Mat& cameraFrame, const cv::Mat& detectionMask,
 }
 
 
+
+// Generate a short original PCM shot sound once and play it off the camera thread.
+const std::vector<char>& shotSoundWav(){
+    static const std::vector<char> wave=[]{
+        constexpr int sampleRate=22050;
+        constexpr int samples=2646;
+        std::vector<char> data(44+samples*2,0);
+        auto word=[&](int position,unsigned int value,int bytes){
+            for(int byteIndex=0;byteIndex<bytes;byteIndex++)
+                data[position+byteIndex]=static_cast<char>((value>>(byteIndex*8))&255);
+        };
+        std::memcpy(data.data(),"RIFF",4);
+        word(4,36+samples*2,4);
+        std::memcpy(data.data()+8,"WAVEfmt ",8);
+        word(16,16,4);word(20,1,2);word(22,1,2);
+        word(24,sampleRate,4);word(28,sampleRate*2,4);
+        word(32,2,2);word(34,16,2);
+        std::memcpy(data.data()+36,"data",4);
+        word(40,samples*2,4);
+        unsigned int noiseSeed=2463534242u;
+        for(int sampleIndex=0;sampleIndex<samples;sampleIndex++){
+            const double progress=static_cast<double>(sampleIndex)/samples;
+            noiseSeed^=noiseSeed<<13;
+            noiseSeed^=noiseSeed>>17;
+            noiseSeed^=noiseSeed<<5;
+            const double noise=(static_cast<double>(noiseSeed&65535u)/32767.5)-1.0;
+            const double oscillation=std::sin(6.28318530718*
+                (170.0*sampleIndex/sampleRate-65.0*progress*progress));
+            const double envelope=(1-progress)*(1-progress)*(1-progress);
+            const double signal=(noise*0.65+oscillation*0.35)*envelope*0.46;
+            const short sample=static_cast<short>(std::clamp(signal,-1.0,1.0)*32767);
+            word(44+sampleIndex*2,static_cast<unsigned short>(sample),2);
+        }
+        return data;
+    }();
+    return wave;
+}
+void playNativeShot(){
+    std::thread([]{
+        const auto& sound=shotSoundWav();
+        PlaySoundA(sound.data(),nullptr,SND_MEMORY|SND_SYNC|SND_NODEFAULT);
+    }).detach();
+}
+
 bool sendAll(SOCKET socket, const std::string& data) {
     size_t offset = 0;
     while (offset < data.size()) {
@@ -901,6 +945,7 @@ int main(int argc, char** argv) {
                         cv::Point2f mappedPoint;
                         if(!correctedPoint(rawPoint,mappedPoint))continue;
                         sendShot(mappedPoint.x,mappedPoint.y,timestamp);
+                        playNativeShot();
                         lastLaserRaw=rawPoint;
                         lastLaserCorrected=mappedPoint;
                         lastLaserValid=true;

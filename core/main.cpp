@@ -42,10 +42,12 @@ HWND calibrateButton=nullptr,clearCalibrationButton=nullptr;
 HWND zeroButton=nullptr,clearZeroButton=nullptr;
 HWND offsetXControl=nullptr,offsetYControl=nullptr,offsetXLabel=nullptr,offsetYLabel=nullptr;
 HWND settingsStatus=nullptr;
+HWND resolutionCombo=nullptr,fpsCombo=nullptr,resolutionLabel=nullptr,fpsLabel=nullptr;
 enum PanelView { NoPanel, PresetPanel, SettingsPanel, CalibrationPanel, ZeroPanel };
 enum UiButton { CameraButtonId=2100, PresetButtonId, SettingsButtonId, CalibrationButtonId, ZeroButtonId,
 PresetOneId=2120,PresetTwoId,PresetThreeId,PresetSaveId,PresetLoadId,
-CalibrateId=2130,ClearCalibrationId,ZeroStartId,ZeroClearId };
+CalibrateId=2130,ClearCalibrationId,ZeroStartId,ZeroClearId,
+CameraResolutionId=2140,CameraFpsId,CameraModeApplyId };
 PanelView activePanel=NoPanel;
 bool maskView=false;
 int calibrationStep=-1;
@@ -177,6 +179,12 @@ void layoutPreviewControls(HWND window){
     SetWindowPos(offsetXControl,nullptr,sideLeft+12,220,330,35,SWP_NOZORDER);
     SetWindowPos(offsetYLabel,nullptr,sideLeft+12,270,330,22,SWP_NOZORDER);
     SetWindowPos(offsetYControl,nullptr,sideLeft+12,296,330,35,SWP_NOZORDER);
+    for(HWND control:{resolutionCombo,fpsCombo,resolutionLabel,fpsLabel})
+        ShowWindow(control,settingsVisible?SW_SHOW:SW_HIDE);
+    SetWindowPos(resolutionLabel,nullptr,sideLeft+12,668,340,20,SWP_NOZORDER);
+    SetWindowPos(resolutionCombo,nullptr,sideLeft+12,689,340,180,SWP_NOZORDER);
+    SetWindowPos(fpsLabel,nullptr,sideLeft+12,721,340,20,SWP_NOZORDER);
+    SetWindowPos(fpsCombo,nullptr,sideLeft+12,741,340,160,SWP_NOZORDER);
     ShowWindow(settingsStatus,activePanel==NoPanel?SW_HIDE:SW_SHOW);
     SetWindowPos(settingsStatus,nullptr,sideLeft+12,activePanel==SettingsPanel?680:210,340,100,SWP_NOZORDER);
 }
@@ -267,6 +275,22 @@ void createPreviewControls(HWND window) {
     SendMessageA(offsetXControl,TBM_SETPOS,TRUE,static_cast<LPARAM>(std::lround(zeroOffsetX*1000)));
     SendMessageA(offsetYControl,TBM_SETPOS,TRUE,static_cast<LPARAM>(std::lround(zeroOffsetY*1000)));
     updateZeroLabels();
+    resolutionLabel=CreateWindowExA(0,"STATIC","Capture resolution (driver may refuse)",WS_CHILD,
+        0,0,340,20,window,nullptr,GetModuleHandleA(nullptr),nullptr);
+    fpsLabel=CreateWindowExA(0,"STATIC","Requested camera FPS",WS_CHILD,
+        0,0,340,20,window,nullptr,GetModuleHandleA(nullptr),nullptr);
+    resolutionCombo=CreateWindowExA(0,"COMBOBOX","",WS_CHILD|WS_VSCROLL|CBS_DROPDOWNLIST,
+        0,0,340,150,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(CameraResolutionId)),
+        GetModuleHandleA(nullptr),nullptr);
+    fpsCombo=CreateWindowExA(0,"COMBOBOX","",WS_CHILD|WS_VSCROLL|CBS_DROPDOWNLIST,
+        0,0,340,150,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(CameraFpsId)),
+        GetModuleHandleA(nullptr),nullptr);
+    for(const char* option:{"640 x 480","1280 x 720","1920 x 1080"})
+        SendMessageA(resolutionCombo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(option));
+    for(const char* option:{"30 FPS","60 FPS","120 FPS"})
+        SendMessageA(fpsCombo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(option));
+    SendMessageA(resolutionCombo,CB_SETCURSEL,0,0);
+    SendMessageA(fpsCombo,CB_SETCURSEL,0,0);
     settingsStatus=CreateWindowExA(0,"STATIC","",WS_CHILD|SS_LEFT,
         0,0,320,70,window,nullptr,GetModuleHandleA(nullptr),nullptr);
     updateSliderLabels();
@@ -330,6 +354,8 @@ LRESULT CALLBACK previewWindowProcedure(HWND window, UINT message, WPARAM wordPa
             updateZeroLabels();
         }
         else if(clicked>=PresetOneId&&clicked<=PresetLoadId)uiAction=clicked;
+        else if((clicked==CameraResolutionId||clicked==CameraFpsId)&&HIWORD(wordParameter)==CBN_SELCHANGE)
+            uiAction=CameraModeApplyId;
         updatePanels();
         return 0;
     }
@@ -640,9 +666,12 @@ int main(int argc, char** argv) {
         WSACleanup();
         return 1;
     }
-    camera.set(cv::CAP_PROP_FRAME_WIDTH, captureWidth);
-    camera.set(cv::CAP_PROP_FRAME_HEIGHT, captureHeight);
-    camera.set(cv::CAP_PROP_FPS, requestedFps);
+    const int preferredWidth=iniInt("camera","width",captureWidth);
+    const int preferredHeight=iniInt("camera","height",captureHeight);
+    const int preferredFps=iniInt("camera","fps",requestedFps);
+    camera.set(cv::CAP_PROP_FRAME_WIDTH,preferredWidth);
+    camera.set(cv::CAP_PROP_FRAME_HEIGHT,preferredHeight);
+    camera.set(cv::CAP_PROP_FPS,preferredFps);
     camera.set(cv::CAP_PROP_BUFFERSIZE, 1);
     std::cout << "Camera actual settings: "
               << camera.get(cv::CAP_PROP_FRAME_WIDTH) << "x"
@@ -654,6 +683,10 @@ int main(int argc, char** argv) {
     previewWindow = createPreviewWindow();
     if (!previewWindow) std::cerr << "Camera preview unavailable; detection will continue.\n";
     if(previewWindow){
+        const int resolutionIndex=preferredWidth>=1900?2:preferredWidth>=1200?1:0;
+        const int fpsIndex=preferredFps>=120?2:preferredFps>=60?1:0;
+        SendMessageA(resolutionCombo,CB_SETCURSEL,resolutionIndex,0);
+        SendMessageA(fpsCombo,CB_SETCURSEL,fpsIndex,0);
         const int initialValues[]={
             iniInt("settings","Brightness",initialBrightness),
             iniInt("settings","Red excess",initialRedDifference),
@@ -697,6 +730,23 @@ int main(int argc, char** argv) {
     int previousSettingValues[6]={-9999,-9999,-9999,-9999,-9999,-9999};
     while (running) {
         const int action=uiAction.exchange(0);
+        if(previewWindow&&action==CameraModeApplyId){
+            const int resolutionIndex=static_cast<int>(SendMessageA(resolutionCombo,CB_GETCURSEL,0,0));
+            const int fpsIndex=static_cast<int>(SendMessageA(fpsCombo,CB_GETCURSEL,0,0));
+            const int widths[]={640,1280,1920},heights[]={480,720,1080},fpsOptions[]={30,60,120};
+            if(resolutionIndex>=0&&resolutionIndex<3&&fpsIndex>=0&&fpsIndex<3){
+                const bool widthApplied=camera.set(cv::CAP_PROP_FRAME_WIDTH,widths[resolutionIndex]);
+                const bool heightApplied=camera.set(cv::CAP_PROP_FRAME_HEIGHT,heights[resolutionIndex]);
+                const bool fpsApplied=camera.set(cv::CAP_PROP_FPS,fpsOptions[fpsIndex]);
+                previousRed.release();
+                saveInt("camera","width",widths[resolutionIndex]);
+                saveInt("camera","height",heights[resolutionIndex]);
+                saveInt("camera","fps",fpsOptions[fpsIndex]);
+                std::cout<<"Requested camera mode "<<widths[resolutionIndex]<<"x"<<heights[resolutionIndex]
+                         <<" "<<fpsOptions[fpsIndex]<<"fps; driver applied W/H/FPS="
+                         <<widthApplied<<"/"<<heightApplied<<"/"<<fpsApplied<<"\n";
+            }
+        }
         if(previewWindow&&action>=PresetOneId&&action<=PresetLoadId){
             const int index=action-PresetOneId;
             if(index==3){

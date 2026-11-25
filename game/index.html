@@ -280,22 +280,44 @@ ring.position.z=0.1;group.add(ring);
 const backing=new THREE.Mesh(new THREE.CylinderGeometry(0.94,0.94,0.09,64),
 new THREE.MeshStandardMaterial({color:0x596371,metalness:0.77,roughness:0.42}));
 backing.rotation.x=Math.PI/2;backing.position.z=-0.08;group.add(backing);
-// Five black apertures sit in the metal biathlon plate.
-// A white circular cover slides across each aperture upon a confirmed hit.
-const aperture=new THREE.Mesh(new THREE.CircleGeometry(0.70,64),
-new THREE.MeshBasicMaterial({color:0x0a0b0c}));
-aperture.position.z=0.22;
-const cover=new THREE.Mesh(new THREE.CircleGeometry(0.705,64),
-new THREE.MeshStandardMaterial({color:0xe5e8e7,metalness:0.38,roughness:0.4}));
-cover.position.set(0,0,0.30);
-cover.scale.setScalar(0);
-const plate=new THREE.Mesh(new THREE.RingGeometry(0.70,0.90,64),
-new THREE.MeshStandardMaterial({color:0xc6d1d4,metalness:0.7,roughness:0.35,side:THREE.DoubleSide}));
-plate.position.z=0.24;
-group.add(aperture,cover,plate);
-const stand=new THREE.Mesh(new THREE.BoxGeometry(.08,1.5,.08),new THREE.MeshStandardMaterial({
-color:0x66747d,metalness:.8,roughness:.34}));
-stand.position.set(0,-1.55,-0.25);group.add(stand);
+// Matte black aiming openings embedded in the common white panel.
+const aperture=new THREE.Mesh(new THREE.CircleGeometry(.70,80),
+new THREE.MeshStandardMaterial({color:0x080b0d,metalness:.18,roughness:.9,
+side:THREE.DoubleSide}));
+aperture.position.z=.22;
+group.add(aperture);
+// Prone retains a 115 mm aiming circle but scores only within 45 mm.
+const proneCollider=new THREE.Mesh(new THREE.CircleGeometry(.70*45/115,64),
+new THREE.MeshBasicMaterial({color:0x101417,side:THREE.DoubleSide}));
+proneCollider.position.z=.254;
+group.add(proneCollider);
+const proneBoundary=new THREE.Mesh(
+new THREE.RingGeometry(.70*45/115,.70*45/115+.012,64),
+new THREE.MeshBasicMaterial({color:0x55606a,side:THREE.DoubleSide}));
+proneBoundary.position.z=.261;group.add(proneBoundary);
+// Realistic lower-pivot white knock-down indicator: folded flat at bottom,
+// rotates up around horizontal hinge until covering the SAME black aperture.
+const hinge=new THREE.Group();
+hinge.position.set(0,-.705,.32);
+hinge.rotation.x=-Math.PI/2;
+const cover=new THREE.Mesh(new THREE.CircleGeometry(.705,80),
+new THREE.MeshStandardMaterial({color:0xe8eeed,metalness:.42,roughness:.43,
+side:THREE.DoubleSide}));
+cover.position.set(0,.705,0);
+hinge.add(cover);group.add(hinge);
+const hingeAxle=new THREE.Mesh(new THREE.CylinderGeometry(.045,.045,.30,16),
+new THREE.MeshStandardMaterial({color:0x60737a,metalness:.88,roughness:.26}));
+hingeAxle.rotation.z=Math.PI/2;
+hingeAxle.position.set(0,-.75,.33);group.add(hingeAxle);
+// Keep old per-target metal components only for non-biathlon modes.
+const plate=new THREE.Mesh(new THREE.RingGeometry(.70,.90,64),
+new THREE.MeshStandardMaterial({color:0xc6d1d4,metalness:.7,roughness:.35,
+side:THREE.DoubleSide}));
+plate.position.z=.24;
+group.add(plate);
+const stand=new THREE.Mesh(new THREE.BoxGeometry(.08,1.5,.08),
+new THREE.MeshStandardMaterial({color:0x66747d,metalness:.8,roughness:.34}));
+stand.position.set(0,-1.55,-.25);group.add(stand);
 // Flight model assembled from ellipsoid meshes (without external libraries).
 const duck=new THREE.Group();
 const plumage=new THREE.MeshStandardMaterial({color:0x675044,roughness:.95});
@@ -319,7 +341,7 @@ const tail=new THREE.Mesh(new THREE.ConeGeometry(.23,.44,12),darker);
 tail.rotation.z=-Math.PI/2;tail.position.set(-.95,.09,0);duck.add(tail);
 duck.visible=false;group.add(duck);
 scene.add(group);
-targets.push({group,sphere,ring,backing,index,flashUntil:0,closed:false,cover,aperture,plate,stand,duck,
+targets.push({group,sphere,ring,backing,index,flashUntil:0,closed:false,cover,hinge,hingeAxle,aperture,proneCollider,proneBoundary,plate,stand,duck,
 duckMeshes:[duckBody,duckHead,leftWing,rightWing],
 duckBody,leftWing,rightWing,closure:0,duckDirection:index%2?1:-1,duckSpeed:1.2});
 }
@@ -520,12 +542,12 @@ target.sphere.visible=false;
 target.ring.visible=false;
 target.backing.visible=false;
 target.aperture.visible=false;
-target.cover.visible=false;
+target.hinge.visible=false;target.hingeAxle.visible=false;
+target.proneCollider.visible=false;target.proneBoundary.visible=false;
 target.plate.visible=false;
 target.stand.visible=false;
 target.duck.visible=false;
-target.cover.position.x=0;
-target.cover.scale.setScalar(0);
+target.hinge.rotation.x=-Math.PI/2;
 target.sphere.material.emissiveIntensity=0.0;
 target.group.rotation.z=0;
 target.group.scale.setScalar(1);
@@ -549,9 +571,11 @@ target.group.visible=true;
 target.group.scale.setScalar(boardScale);
 target.group.position.set((target.index-2)*2*boardScale,0,-0.65);
 target.aperture.visible=true;
-target.cover.visible=true;
+target.hinge.visible=true;target.hingeAxle.visible=true;
+target.proneCollider.visible=biathlonPosture.value==='prone';
+target.proneBoundary.visible=biathlonPosture.value==='prone';
 target.plate.visible=false;target.backing.visible=false;target.stand.visible=false;
-target.cover.scale.setScalar(0);
+target.hinge.rotation.x=-Math.PI/2;
 }
 }else if(gameMode==='popups'){
 const target=targets[0];
@@ -628,7 +652,9 @@ if(Math.abs(target.group.position.x)>halfWidth+1.8)resetDuck(target,index);
 for(const target of targets){
 if(gameMode==='biathlon'){
 target.closure+=(Number(target.closed)-target.closure)*Math.min(1,deltaSeconds*7.5);
-target.cover.scale.setScalar(target.closure);
+// Rotation around the lower hinge: bottom edge rises toward the centre.
+const motion=target.closure*target.closure*(3-2*target.closure);
+target.hinge.rotation.x=-Math.PI/2*(1-motion);
 }
 target.sphere.material.emissiveIntensity=timestamp<target.flashUntil?0.6:0.0;
 }
@@ -641,7 +667,8 @@ if(!Number.isFinite(normalizedX)||!Number.isFinite(normalizedY)||normalizedX<0||
 pointer.set(normalizedX*2-1,1-normalizedY*2);
 raycaster.setFromCamera(pointer,camera);
 const activeTargets=targets.filter(target=>target.group.visible&&!target.closed);
-const colliderFor=target=>gameMode==='biathlon'?target.aperture:target.sphere;
+const colliderFor=target=>gameMode==='biathlon'?
+(biathlonPosture.value==='prone'?target.proneCollider:target.aperture):target.sphere;
 const possibleColliders=gameMode==='ducks'
 ?activeTargets.flatMap(target=>target.duckMeshes)
 :activeTargets.map(colliderFor);

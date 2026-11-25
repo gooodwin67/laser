@@ -17,6 +17,11 @@ canvas{display:block}#hud{position:fixed;top:14px;left:14px;right:14px;display:f
 button{border:0;border-radius:10px;padding:13px 24px;background:#23a4ed;color:#061525;font-size:17px;font-weight:750;cursor:pointer}
 #toast{position:fixed;left:50%;top:26%;transform:translate(-50%,-50%);font-weight:800;font-size:30px;text-shadow:0 3px 22px #000;pointer-events:none;opacity:0;transition:opacity .15s;z-index:3}
 #toast.visible{opacity:1}
+body.duck-hunt{background:#60777a url('https://images.unsplash.com/photo-1673201132281-e5521f5321b8?auto=format&fit=crop&w=1920&q=85') center center / cover no-repeat}
+#photoCredit{position:fixed;right:12px;bottom:12px;z-index:2;font:11px system-ui;background:#081520aa;border-radius:6px;padding:5px 9px;display:none}
+body.duck-hunt #photoCredit{display:block}
+#photoCredit a{color:#cceaff}
+
 #exitGame{position:fixed;top:12px;right:12px;z-index:4;font-size:13px;padding:8px 13px;background:#112638df;color:#e7f7ff;border:1px solid #4c7290}
 #modeHint{position:fixed;top:72px;left:14px;background:#061522df;color:#d3f0ff;border-radius:8px;padding:7px 11px;font-size:12px;z-index:2;pointer-events:none}
 
@@ -34,7 +39,7 @@ button{border:0;border-radius:10px;padding:13px 24px;background:#23a4ed;color:#0
 </div>
 <button id="exitGame" title="Выйти в Laser Lab">✕ Выход</button><div id="modeHint"></div>
 <div id="connection">Камера: подключение к ws://127.0.0.1:8765… · Мышь тоже работает</div>
-<div id="toast"></div>
+<div id="toast"></div><div id="photoCredit">Фон: <a href="https://unsplash.com/photos/a-body-of-water-surrounded-by-tall-grass-N8R00J6ct_A" target="_blank" rel="noopener">Camara Negra / Unsplash</a></div>
 <div id="laserDebug">Выстрелов с камеры: 0 · калибровка ещё не настроена</div>
 <div id="laserDot"></div>
 <div id="overlay"><div class="panel">
@@ -46,13 +51,15 @@ button{border:0;border-radius:10px;padding:13px 24px;background:#23a4ed;color:#0
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.181.0/build/three.module.js';
 
 const availableModes={
-arcade:{title:'LASER ARCADE',description:'Три шара: два движущихся и один неподвижный. 60 секунд на максимальный счёт.'},
+arcade:{title:'LASER ARCADE',description:'Три круглые спортивные мишени: две движущиеся, одна неподвижная. 60 секунд на максимальный счёт.'},
 biathlon:{title:'БИАТЛОН',description:'Пять неподвижных мишеней и пять выстрелов. Закрой как можно больше мишеней.'},
-popups:{title:'БЫСТРЫЕ МИШЕНИ',description:'Мишень появляется в случайном месте, исчезает через 2 секунды. Успей попасть за 60 секунд.'}
+popups:{title:'БЫСТРЫЕ МИШЕНИ',description:'Спортивная мишень появляется в случайном месте, исчезает через 2 секунды. Успей попасть за 60 секунд.'},
+ducks:{title:'УТИНАЯ ЗАВОДЬ',description:'Утреннее озеро: летящие утки, 60 секунд, 100 очков за попадание. Утки улетают и появляются снова.'}
 };
 const requestedMode=new URLSearchParams(location.search).get('mode');
 const gameMode=Object.hasOwn(availableModes,requestedMode)?requestedMode:'arcade';
 const modeDefinition=availableModes[gameMode];
+if(gameMode==='ducks')document.body.classList.add('duck-hunt');
 const modeHint=document.getElementById('modeHint');
 modeHint.textContent=modeDefinition.title;
 document.getElementById('panelTitle').textContent=modeDefinition.title;
@@ -63,11 +70,11 @@ window.parent.postMessage({type:'laser-game-exit'},location.origin);
 }else window.location.href='../web-detector/';
 };
 const scene=new THREE.Scene();
-scene.background=new THREE.Color(0x081323);
-scene.fog=new THREE.Fog(0x081323,13,26);
+scene.background=gameMode==='ducks'?null:new THREE.Color(0x081323);
+scene.fog=gameMode==='ducks'?null:new THREE.Fog(0x081323,13,26);
 const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.1,100);
 camera.position.set(0,0,11);
-const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,powerPreference:'high-performance'});
 renderer.setSize(innerWidth,innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
 renderer.outputColorSpace=THREE.SRGBColorSpace;
@@ -108,20 +115,89 @@ map:wallTexture,color:0x8c9cab,roughness:1
 }));
 wall.position.z=-3.3;
 scene.add(wall);
+if(gameMode==='ducks')wall.visible=false;
+// Flat but physically shaded printed targets: paper, popper and mechanical biathlon.
+function paperTargetTexture(){
+const canvas=document.createElement('canvas');
+canvas.width=512;canvas.height=512;
+const paint=canvas.getContext('2d'),center=256;
+paint.clearRect(0,0,512,512);
+paint.shadowColor='rgba(0,0,0,0.5)';paint.shadowBlur=20;
+paint.fillStyle='#ece5d4';paint.beginPath();paint.arc(center,center,241,0,Math.PI*2);paint.fill();
+paint.shadowBlur=0;
+const bands=[['#1c242d',219],['#e7e9e9',175],['#bd3835',133],['#e8dbc2',91],['#181b20',48]];
+for(const [color,radius] of bands){paint.fillStyle=color;paint.beginPath();paint.arc(center,center,radius,0,Math.PI*2);paint.fill();}
+paint.strokeStyle='rgba(0,0,0,.45)';paint.lineWidth=3;
+for(const radius of [219,175,133,91,48]){paint.beginPath();paint.arc(center,center,radius,0,Math.PI*2);paint.stroke();}
+paint.strokeStyle='#877d6a';paint.lineWidth=1;
+paint.beginPath();paint.moveTo(256,8);paint.lineTo(256,504);paint.moveTo(8,256);paint.lineTo(504,256);paint.stroke();
+paint.fillStyle='#f9f1e3';paint.font='bold 24px Arial';paint.textAlign='center';
+paint.fillText('10',256,265);
+for(let index=0;index<1500;index++){
+const pointX=Math.random()*512,pointY=Math.random()*512;
+if(Math.hypot(pointX-center,pointY-center)>238)continue;
+paint.fillStyle='rgba(39,29,21,'+(Math.random()*0.09)+')';
+paint.fillRect(pointX,pointY,1.5,1.5);
+}
+const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;
+return texture;
+}
+const paperTexture=paperTargetTexture();
 const targets=[];
-const targetColors=[0x4fd4ff,0xffb64a,0xd78aff,0x59b7a0,0xff7e84];
+const targetColors=[0xffffff,0xfff0db,0xd8e9f5,0xe0eee7,0xffe7d5];
 for(let index=0;index<5;index++){
 const group=new THREE.Group();
-const sphere=new THREE.Mesh(
-new THREE.SphereGeometry(0.73,32,24),
-new THREE.MeshStandardMaterial({color:targetColors[index],metalness:0.3,roughness:0.27,emissive:targetColors[index],emissiveIntensity:0.15})
-);
+const paperMaterial=new THREE.MeshStandardMaterial({
+map:paperTexture,transparent:true,side:THREE.DoubleSide,roughness:0.92,metalness:0});
+const sphere=new THREE.Mesh(new THREE.CircleGeometry(0.86,64),paperMaterial);
+sphere.position.z=0.15;
 group.add(sphere);
-const ring=new THREE.Mesh(new THREE.TorusGeometry(0.93,0.035,8,64),new THREE.MeshBasicMaterial({color:targetColors[index],transparent:true,opacity:0.65}));
-ring.position.z=-0.15;
-group.add(ring);
+const ring=new THREE.Mesh(new THREE.TorusGeometry(0.92,0.028,8,64),
+new THREE.MeshStandardMaterial({color:0x252a2e,metalness:0.75,roughness:0.32}));
+ring.position.z=0.1;group.add(ring);
+const backing=new THREE.Mesh(new THREE.CylinderGeometry(0.94,0.94,0.09,64),
+new THREE.MeshStandardMaterial({color:0x596371,metalness:0.77,roughness:0.42}));
+backing.rotation.x=Math.PI/2;backing.position.z=-0.08;group.add(backing);
+// Five black apertures sit in the metal biathlon plate.
+// A white circular cover slides across each aperture upon a confirmed hit.
+const aperture=new THREE.Mesh(new THREE.CircleGeometry(0.70,64),
+new THREE.MeshBasicMaterial({color:0x0a0b0c}));
+aperture.position.z=0.22;
+const cover=new THREE.Mesh(new THREE.CircleGeometry(0.705,64),
+new THREE.MeshStandardMaterial({color:0xe5e8e7,metalness:0.38,roughness:0.4}));
+cover.position.set(-1.5,0,0.27);
+const plate=new THREE.Mesh(new THREE.RingGeometry(0.70,0.90,64),
+new THREE.MeshStandardMaterial({color:0xc6d1d4,metalness:0.7,roughness:0.35,side:THREE.DoubleSide}));
+plate.position.z=0.24;
+group.add(aperture,cover,plate);
+const stand=new THREE.Mesh(new THREE.BoxGeometry(.08,1.5,.08),new THREE.MeshStandardMaterial({
+color:0x66747d,metalness:.8,roughness:.34}));
+stand.position.set(0,-1.55,-0.25);group.add(stand);
+// Flight model assembled from ellipsoid meshes (without external libraries).
+const duck=new THREE.Group();
+const plumage=new THREE.MeshStandardMaterial({color:0x675044,roughness:.95});
+const darker=new THREE.MeshStandardMaterial({color:0x322e2b,roughness:.94});
+const cream=new THREE.MeshStandardMaterial({color:0xdbc3a1,roughness:.95});
+const billMaterial=new THREE.MeshStandardMaterial({color:0xe5a843,roughness:.7});
+function ellipsoid(parent,radii,material,position){
+const object=new THREE.Mesh(new THREE.SphereGeometry(1,20,14),material);
+object.scale.set(...radii);object.position.set(...position);parent.add(object);return object;
+}
+const duckBody=ellipsoid(duck,[0.88,0.34,0.35],plumage,[0,0,0]);
+ellipsoid(duck,[0.55,.23,.31],cream,[.1,-.14,.04]);
+ellipsoid(duck,[.27,.29,.28],darker,[.7,.20,0]);
+const beak=new THREE.Mesh(new THREE.ConeGeometry(.15,.33,12),billMaterial);
+beak.rotation.z=-Math.PI/2;beak.position.set(1.0,.16,0);duck.add(beak);
+ellipsoid(duck,[.052,.052,.045],new THREE.MeshBasicMaterial({color:0x10171b}),[.82,.28,.25]);
+const leftWing=ellipsoid(duck,[.46,.13,.25],darker,[-.17,.22,.34]);
+const rightWing=ellipsoid(duck,[.46,.13,.25],darker,[-.17,.22,-.34]);
+leftWing.rotation.z=.32;rightWing.rotation.z=-.22;
+const tail=new THREE.Mesh(new THREE.ConeGeometry(.23,.44,12),darker);
+tail.rotation.z=-Math.PI/2;tail.position.set(-.95,.09,0);duck.add(tail);
+duck.visible=false;group.add(duck);
 scene.add(group);
-targets.push({group,sphere,ring,index,flashUntil:0,closed:false});
+targets.push({group,sphere,ring,index,flashUntil:0,closed:false,cover,aperture,plate,stand,duck,
+duckBody,leftWing,rightWing,closure:0,duckDirection:index%2?1:-1,duckSpeed:1.2});
 }
 // Permanent scorch decals are in world space, behind the moving targets.
 const scorchMarks=[];
@@ -301,28 +377,56 @@ target.group.position.set((Math.random()*2-1)*horizontalRange,
 popupExpiresAt=timestamp+2000;
 popupNumber++;
 }
+function resetDuck(target,index){
+const visibleHalfHeight=Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.position.z;
+const visibleHalfWidth=visibleHalfHeight*camera.aspect;
+target.duckDirection=index%2===0?1:-1;
+target.duckSpeed=1.05+index*.32+Math.random()*.45;
+target.group.position.set(target.duckDirection>0?-visibleHalfWidth-1.3:visibleHalfWidth+1.3,
+  -1.25+index*1.3+(Math.random()-.5)*.55,0);
+target.group.scale.setScalar(.9-index*.08);
+target.duck.scale.x=target.duckDirection;
+target.group.visible=true;
+}
 function configureTargets(timestamp){
 for(const target of targets){
-target.group.visible=false;target.closed=false;
-target.sphere.material.emissiveIntensity=0.15;
-target.sphere.material.color.setHex(targetColors[target.index]);
+target.group.visible=false;target.closed=false;target.closure=0;
+target.sphere.visible=false;
+target.ring.visible=false;
+target.aperture.visible=false;
+target.cover.visible=false;
+target.plate.visible=false;
+target.stand.visible=false;
+target.duck.visible=false;
+target.cover.position.x=-1.5;
+target.sphere.material.emissiveIntensity=0.0;
+target.group.rotation.z=0;
 target.group.scale.setScalar(1);
 }
 if(gameMode==='arcade'){
-for(let index=0;index<3;index++)targets[index].group.visible=true;
+for(let index=0;index<3;index++){
+const target=targets[index];target.group.visible=true;
+target.sphere.visible=true;target.ring.visible=true;
+}
 }else if(gameMode==='biathlon'){
 const visibleHalfWidth=Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.position.z*camera.aspect;
-const gap=Math.min(1.65,Math.max(0.65,(visibleHalfWidth*2-1.3)/4));
+const gap=Math.min(1.95,Math.max(0.57,(visibleHalfWidth*2-1.2)/4));
 for(const target of targets){
 target.group.visible=true;
-target.group.scale.setScalar(Math.min(0.72,gap*0.52));
+target.group.scale.setScalar(Math.min(.72,gap*.55));
 target.group.position.set((target.index-2)*gap,0,0);
-target.sphere.material.color.setHex(0x272c32);
-target.ring.material.color.setHex(0xece6de);
+target.aperture.visible=true;target.plate.visible=true;target.cover.visible=true;
+target.stand.visible=true;
 }
-}else{
-targets[0].group.visible=true;
+}else if(gameMode==='popups'){
+const target=targets[0];
+target.group.visible=true;target.sphere.visible=true;target.ring.visible=true;
 movePopupTarget(timestamp);
+}else if(gameMode==='ducks'){
+for(let index=0;index<3;index++){
+const target=targets[index];
+target.duck.visible=true;resetDuck(target,index);
+}
 }
 }
 
@@ -364,7 +468,7 @@ toastElement.classList.add('visible');
 clearTimeout(toastTimer);
 toastTimer=setTimeout(()=>toastElement.classList.remove('visible'),260);
 }
-function updateTargets(seconds){
+function updateTargets(seconds,deltaSeconds){
 const timestamp=performance.now();
 if(gameMode==='arcade'){
 const aspect=Math.max(0.65,Math.min(2.4,camera.aspect));
@@ -372,15 +476,26 @@ const horizontalRange=3.55*Math.min(1,aspect/1.3);
 targets[0].group.position.set(Math.sin(seconds*1.15)*horizontalRange,1.55+Math.sin(seconds*1.8)*0.3,0);
 targets[1].group.position.set(0,0,0);
 targets[2].group.position.set(Math.sin(seconds*1.4+4.8)*horizontalRange,-1.8+Math.sin(seconds*2.1)*0.28,0);
-for(const target of targets){
-target.group.rotation.z=target.index===1?0:Math.sin(seconds*1.6+target.index)*0.12;
-target.ring.rotation.z=target.index===1?0:seconds*(0.2+target.index*0.15);
-}
 }else if(gameMode==='popups'&&gameActive&&timestamp>=popupExpiresAt){
 movePopupTarget(timestamp);
+}else if(gameMode==='ducks'&&gameActive){
+const halfWidth=Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.position.z*camera.aspect;
+for(let index=0;index<3;index++){
+const target=targets[index];
+target.group.position.x+=target.duckDirection*target.duckSpeed*
+deltaSeconds;
+target.group.position.y+=Math.sin(seconds*4.3+index*1.8)*.006;
+target.leftWing.rotation.z=.24+Math.sin(seconds*12+index)*.48;
+target.rightWing.rotation.z=-.24-Math.sin(seconds*12+index)*.48;
+if(Math.abs(target.group.position.x)>halfWidth+1.8)resetDuck(target,index);
+}
 }
 for(const target of targets){
-target.sphere.material.emissiveIntensity=timestamp<target.flashUntil?1.4:0.15;
+if(gameMode==='biathlon'){
+target.closure+=(Number(target.closed)-target.closure)*Math.min(1,deltaSeconds*7.5);
+target.cover.position.x=-1.5*(1-target.closure);
+}
+target.sphere.material.emissiveIntensity=timestamp<target.flashUntil?0.6:0.0;
 }
 }
 function shoot(normalizedX,normalizedY){
@@ -391,29 +506,32 @@ if(!Number.isFinite(normalizedX)||!Number.isFinite(normalizedY)||normalizedX<0||
 pointer.set(normalizedX*2-1,1-normalizedY*2);
 raycaster.setFromCamera(pointer,camera);
 const activeTargets=targets.filter(target=>target.group.visible&&!target.closed);
-const intersection=raycaster.intersectObjects(activeTargets.map(target=>target.sphere),false)[0];
+const colliderFor=target=>gameMode==='ducks'?target.duckBody:
+gameMode==='biathlon'?target.aperture:target.sphere;
+const intersection=raycaster.intersectObjects(activeTargets.map(colliderFor),false)[0];
 shotsFired++;
 playShotSound();
 if(intersection){
 // Hits never produce a wall stain; the sphere itself flashes.
 playHitSound();
-const target=targets.find(item=>item.sphere===intersection.object);
+const target=targets.find(item=>colliderFor(item)===intersection.object);
 target.flashUntil=performance.now()+150;
 hits++;
 score+=100;
 if(gameMode==='biathlon'){
 target.closed=true;
-target.sphere.material.color.setHex(0x40d98a);
-target.ring.material.color.setHex(0x40d98a);
+target.flashUntil=0; // White steel shutter slides across the black aperture.
 }else if(gameMode==='popups'){
 movePopupTarget(performance.now());
+}else if(gameMode==='ducks'){
+resetDuck(target,target.index);
 }
 showToast('+100',true);
 }else{
 misses++;
 playMissSound();
 // Intersect the actual wall plane to place a persistent scorch mark.
-const wallIntersection=raycaster.intersectObject(wall,false)[0];
+const wallIntersection=gameMode==='ducks'?null:raycaster.intersectObject(wall,false)[0];
 if(wallIntersection)addWallImpact(wallIntersection.point);
 showToast('Промах',false);
 }
@@ -512,7 +630,7 @@ requestAnimationFrame(animate);
 const deltaSeconds=Math.min(0.05,Math.max(0,(timestamp-lastFrameTimestamp)/1000));
 lastFrameTimestamp=timestamp;
 const seconds=timestamp/1000;
-updateTargets(seconds);
+updateTargets(seconds,deltaSeconds);
 updateWallParticles(timestamp,deltaSeconds);
 if(gameActive){
 const remaining=gameMode==='biathlon'?Math.max(0,5-shotsFired):

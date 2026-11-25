@@ -116,6 +116,34 @@ map:wallTexture,color:0x8c9cab,roughness:1
 wall.position.z=-3.3;
 scene.add(wall);
 if(gameMode==='ducks')wall.visible=false;
+
+// Single white steel face with five apertures, one metal frame and two legs.
+const biathlonAssembly=new THREE.Group();
+const biathlonFrameMaterial=new THREE.MeshStandardMaterial({
+color:0x647582,metalness:0.72,roughness:0.45});
+const biathlonFaceMaterial=new THREE.MeshStandardMaterial({
+color:0xe9e9e3,metalness:0.20,roughness:0.67});
+const biathlonPanel=new THREE.Mesh(
+new THREE.BoxGeometry(11.05,2.35,0.18),biathlonFaceMaterial);
+biathlonPanel.position.set(0,0,-0.04);
+biathlonAssembly.add(biathlonPanel);
+for(const borderY of [-1.21,1.21]){
+const border=new THREE.Mesh(new THREE.BoxGeometry(11.19,0.10,0.23),biathlonFrameMaterial);
+border.position.set(0,borderY,-0.08);biathlonAssembly.add(border);
+}
+for(const borderX of [-5.57,5.57]){
+const border=new THREE.Mesh(new THREE.BoxGeometry(0.10,2.48,0.23),biathlonFrameMaterial);
+border.position.set(borderX,0,-0.08);biathlonAssembly.add(border);
+}
+for(const legX of [-4.6,4.6]){
+const leg=new THREE.Mesh(new THREE.BoxGeometry(0.16,1.9,0.2),biathlonFrameMaterial);
+leg.position.set(legX,-2.20,-0.22);biathlonAssembly.add(leg);
+const foot=new THREE.Mesh(new THREE.BoxGeometry(0.75,0.12,0.42),biathlonFrameMaterial);
+foot.position.set(legX,-3.15,-0.22);biathlonAssembly.add(foot);
+}
+biathlonAssembly.position.set(0,0,-0.65);
+biathlonAssembly.visible=false;
+scene.add(biathlonAssembly);
 // Flat but physically shaded printed targets: paper, popper and mechanical biathlon.
 function paperTargetTexture(){
 const canvas=document.createElement('canvas');
@@ -165,7 +193,8 @@ new THREE.MeshBasicMaterial({color:0x0a0b0c}));
 aperture.position.z=0.22;
 const cover=new THREE.Mesh(new THREE.CircleGeometry(0.705,64),
 new THREE.MeshStandardMaterial({color:0xe5e8e7,metalness:0.38,roughness:0.4}));
-cover.position.set(-1.5,0,0.27);
+cover.position.set(0,0,0.30);
+cover.scale.setScalar(0);
 const plate=new THREE.Mesh(new THREE.RingGeometry(0.70,0.90,64),
 new THREE.MeshStandardMaterial({color:0xc6d1d4,metalness:0.7,roughness:0.35,side:THREE.DoubleSide}));
 plate.position.z=0.24;
@@ -390,6 +419,7 @@ target.duck.scale.x=target.duckDirection;
 target.group.visible=true;
 }
 function configureTargets(timestamp){
+biathlonAssembly.visible=false;
 for(const target of targets){
 target.group.visible=false;target.closed=false;target.closure=0;
 target.sphere.visible=false;
@@ -400,7 +430,8 @@ target.cover.visible=false;
 target.plate.visible=false;
 target.stand.visible=false;
 target.duck.visible=false;
-target.cover.position.x=-1.5;
+target.cover.position.x=0;
+target.cover.scale.setScalar(0);
 target.sphere.material.emissiveIntensity=0.0;
 target.group.rotation.z=0;
 target.group.scale.setScalar(1);
@@ -411,14 +442,22 @@ const target=targets[index];target.group.visible=true;
 target.sphere.visible=true;target.ring.visible=true;target.backing.visible=true;
 }
 }else if(gameMode==='biathlon'){
-const visibleHalfWidth=Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.position.z*camera.aspect;
-const gap=Math.min(1.95,Math.max(0.57,(visibleHalfWidth*2-1.2)/4));
+const visibleHalfWidth=Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*
+    camera.position.z*camera.aspect;
+const visibleHalfHeight=Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*
+    camera.position.z;
+const boardScale=Math.min(1.0,Math.max(0.20,
+    (visibleHalfWidth*1.86)/11.2),Math.max(0.20,(visibleHalfHeight*1.75)/4.4));
+biathlonAssembly.visible=true;
+biathlonAssembly.scale.setScalar(boardScale);
 for(const target of targets){
 target.group.visible=true;
-target.group.scale.setScalar(Math.min(.72,gap*.55));
-target.group.position.set((target.index-2)*gap,0,0);
-target.aperture.visible=true;target.plate.visible=true;target.cover.visible=true;target.backing.visible=true;
-target.stand.visible=true;
+target.group.scale.setScalar(boardScale);
+target.group.position.set((target.index-2)*2*boardScale,0,-0.65);
+target.aperture.visible=true;
+target.cover.visible=true;
+target.plate.visible=false;target.backing.visible=false;target.stand.visible=false;
+target.cover.scale.setScalar(0);
 }
 }else if(gameMode==='popups'){
 const target=targets[0];
@@ -495,7 +534,7 @@ if(Math.abs(target.group.position.x)>halfWidth+1.8)resetDuck(target,index);
 for(const target of targets){
 if(gameMode==='biathlon'){
 target.closure+=(Number(target.closed)-target.closure)*Math.min(1,deltaSeconds*7.5);
-target.cover.position.x=-1.5*(1-target.closure);
+target.cover.scale.setScalar(target.closure);
 }
 target.sphere.material.emissiveIntensity=timestamp<target.flashUntil?0.6:0.0;
 }
@@ -524,7 +563,7 @@ hits++;
 score+=100;
 if(gameMode==='biathlon'){
 target.closed=true;
-target.flashUntil=0; // White steel shutter slides across the black aperture.
+target.flashUntil=0; // White indicator closes this black aperture IN PLACE.
 }else if(gameMode==='popups'){
 movePopupTarget(performance.now());
 }else if(gameMode==='ducks'){

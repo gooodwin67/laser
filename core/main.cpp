@@ -232,6 +232,22 @@ void layoutPreviewControls(HWND window){
     SetWindowPos(resolutionCombo,nullptr,sideLeft+12,689,340,180,SWP_NOZORDER);
     SetWindowPos(fpsLabel,nullptr,sideLeft+12,721,340,20,SWP_NOZORDER);
     SetWindowPos(fpsCombo,nullptr,sideLeft+12,741,340,160,SWP_NOZORDER);
+    const bool opticsVisible=activePanel==OpticsPanel;
+    for(int index=0;index<3;index++){
+        ShowWindow(zoomLabels[index],opticsVisible?SW_SHOW:SW_HIDE);
+        ShowWindow(zoomTracks[index],opticsVisible?SW_SHOW:SW_HIDE);
+        SetWindowPos(zoomLabels[index],nullptr,sideLeft+12,72+index*92,340,44,SWP_NOZORDER);
+        SetWindowPos(zoomTracks[index],nullptr,sideLeft+12,112+index*92,340,32,SWP_NOZORDER);
+    }
+    for(HWND control:{hardwarePropertyLabel,hardwarePropertyCombo,hardwareValueLabel,
+        hardwareValueTrack,hardwareApplyButton,opticsStatus})
+        ShowWindow(control,opticsVisible?SW_SHOW:SW_HIDE);
+    SetWindowPos(hardwarePropertyLabel,nullptr,sideLeft+12,352,340,38,SWP_NOZORDER);
+    SetWindowPos(hardwarePropertyCombo,nullptr,sideLeft+12,388,340,205,SWP_NOZORDER);
+    SetWindowPos(hardwareValueLabel,nullptr,sideLeft+12,440,340,42,SWP_NOZORDER);
+    SetWindowPos(hardwareValueTrack,nullptr,sideLeft+12,480,340,36,SWP_NOZORDER);
+    SetWindowPos(hardwareApplyButton,nullptr,sideLeft+12,525,340,38,SWP_NOZORDER);
+    SetWindowPos(opticsStatus,nullptr,sideLeft+12,582,340,130,SWP_NOZORDER);
     ShowWindow(settingsStatus,activePanel==NoPanel?SW_HIDE:SW_SHOW);
     SetWindowPos(settingsStatus,nullptr,sideLeft+12,activePanel==SettingsPanel?680:210,340,100,SWP_NOZORDER);
 }
@@ -242,6 +258,29 @@ void updateZeroLabels(){
     vertical << "Offset Y: " << std::fixed << std::setprecision(3) << zeroOffsetY << " (up / down)";
     SetWindowTextA(offsetXLabel,horizontal.str().c_str());
     SetWindowTextA(offsetYLabel,vertical.str().c_str());
+}
+void updateOpticsLabels(){
+    if(!zoomLabels[0]||!hardwareValueLabel)return;
+    const int values[]={digitalZoomTimes100,zoomCenterXTimes1000,zoomCenterYTimes1000};
+    const char* names[]={"DIGITAL ZOOM: ","Crop center X: ","Crop center Y: "};
+    for(int index=0;index<3;index++){
+        std::ostringstream label;
+        label<<names[index]<<std::fixed<<std::setprecision(index==0?2:3)
+             <<static_cast<double>(values[index])/(index==0?100.0:1000.0);
+        if(index==0)label<<" x (cropped sensor region, not optical)";
+        if(index==1)label<<" | move horizontal ROI";
+        if(index==2)label<<" | move vertical ROI";
+        SetWindowTextA(zoomLabels[index],label.str().c_str());
+    }
+    const int propertyIndex=hardwarePropertyCombo?
+        static_cast<int>(SendMessageA(hardwarePropertyCombo,CB_GETCURSEL,0,0)):-1;
+    if(propertyIndex>=0&&propertyIndex<hardwarePropertyCount){
+        const HardwareProperty& property=hardwareProperties[propertyIndex];
+        const int value=static_cast<int>(SendMessageA(hardwareValueTrack,TBM_GETPOS,0,0));
+        const std::string detail=std::string(property.name)+": requested "+std::to_string(value)
+            +" | "+property.description;
+        SetWindowTextA(hardwareValueLabel,detail.c_str());
+    }
 }
 void updatePanels(){
     if(previewWindow)layoutPreviewControls(previewWindow);
@@ -338,6 +377,46 @@ void createPreviewControls(HWND window) {
         SendMessageA(fpsCombo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(option));
     SendMessageA(resolutionCombo,CB_SETCURSEL,0,0);
     SendMessageA(fpsCombo,CB_SETCURSEL,0,0);
+    const char* zoomNames[]={"Digital zoom","Center X","Center Y"};
+    const int zoomMinimum[]={100,0,0},zoomMaximum[]={600,1000,1000};
+    const int zoomCurrent[]={digitalZoomTimes100,zoomCenterXTimes1000,zoomCenterYTimes1000};
+    for(int index=0;index<3;index++){
+        zoomLabels[index]=CreateWindowExA(0,"STATIC",zoomNames[index],WS_CHILD|SS_LEFT,
+            0,0,340,44,window,nullptr,GetModuleHandleA(nullptr),nullptr);
+        zoomTracks[index]=CreateWindowExA(0,TRACKBAR_CLASSA,"",WS_CHILD|TBS_HORZ|TBS_NOTICKS,
+            0,0,340,32,window,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(ZoomTrackId+index)),
+            GetModuleHandleA(nullptr),nullptr);
+        SendMessageA(zoomTracks[index],TBM_SETRANGEMIN,FALSE,zoomMinimum[index]);
+        SendMessageA(zoomTracks[index],TBM_SETRANGEMAX,TRUE,zoomMaximum[index]);
+        SendMessageA(zoomTracks[index],TBM_SETPOS,TRUE,zoomCurrent[index]);
+    }
+    hardwarePropertyLabel=CreateWindowExA(0,"STATIC",
+        "Driver camera properties: select one to test",WS_CHILD|SS_LEFT,
+        0,0,340,38,window,nullptr,GetModuleHandleA(nullptr),nullptr);
+    hardwarePropertyCombo=CreateWindowExA(0,"COMBOBOX","",WS_CHILD|WS_VSCROLL|CBS_DROPDOWNLIST,
+        0,0,340,240,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(HardwareComboId)),
+        GetModuleHandleA(nullptr),nullptr);
+    for(const auto& property:hardwareProperties)
+        SendMessageA(hardwarePropertyCombo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(property.name));
+    SendMessageA(hardwarePropertyCombo,CB_SETCURSEL,0,0);
+    hardwareValueLabel=CreateWindowExA(0,"STATIC","",WS_CHILD|SS_LEFT,0,0,340,42,
+        window,nullptr,GetModuleHandleA(nullptr),nullptr);
+    hardwareValueTrack=CreateWindowExA(0,TRACKBAR_CLASSA,"",WS_CHILD|TBS_HORZ|TBS_NOTICKS,
+        0,0,340,36,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(HardwareValueId)),
+        GetModuleHandleA(nullptr),nullptr);
+    SendMessageA(hardwareValueTrack,TBM_SETRANGEMIN,FALSE,hardwareProperties[0].minimum);
+    SendMessageA(hardwareValueTrack,TBM_SETRANGEMAX,TRUE,hardwareProperties[0].maximum);
+    SendMessageA(hardwareValueTrack,TBM_SETPOS,TRUE,hardwareProperties[0].minimum);
+    hardwareApplyButton=CreateWindowExA(0,"BUTTON","Apply to camera driver",
+        WS_CHILD|BS_PUSHBUTTON,0,0,340,38,window,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(HardwareApplyId)),
+        GetModuleHandleA(nullptr),nullptr);
+    opticsStatus=CreateWindowExA(0,"STATIC","Driver controls are experimental.\n"
+        "Zoom may be optical or digital. If a change fails, the camera does not support it.\n"
+        "Any zoom change resets calibration.",WS_CHILD|SS_LEFT,
+        0,0,340,130,window,nullptr,GetModuleHandleA(nullptr),nullptr);
+    updateOpticsLabels();
     settingsStatus=CreateWindowExA(0,"STATIC","",WS_CHILD|SS_LEFT,
         0,0,320,70,window,nullptr,GetModuleHandleA(nullptr),nullptr);
     updateSliderLabels();

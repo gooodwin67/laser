@@ -159,8 +159,10 @@ const save=()=>localStorage.setItem(storageKey,JSON.stringify(config));
 function zoomRegion(){
 const zoom=clamp(Number(config.digitalZoom)||1,1,6);
 const halfWidth=0.5/zoom;
-const centerX=clamp(Number(config.zoomCenterX)||0.5,halfWidth,1-halfWidth);
-const centerY=clamp(Number(config.zoomCenterY)||0.5,halfWidth,1-halfWidth);
+const requestedX=Number(config.zoomCenterX);
+const requestedY=Number(config.zoomCenterY);
+const centerX=clamp(Number.isFinite(requestedX)?requestedX:0.5,halfWidth,1-halfWidth);
+const centerY=clamp(Number.isFinite(requestedY)?requestedY:0.5,halfWidth,1-halfWidth);
 return {zoom,centerX,centerY,x:centerX-halfWidth,y:centerY-halfWidth,width:1/zoom,height:1/zoom};
 }
 function resetAlignmentForZoom(){

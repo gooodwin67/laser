@@ -373,7 +373,7 @@ HWND createPreviewWindow() {
         return nullptr;
     }
     HWND window = CreateWindowExA(0, className,
-        "Laser Core - Camera / Detection mask (Q to exit)", WS_OVERLAPPEDWINDOW,
+        "Laser Core - Camera / Detection mask (Q to exit)", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 1300, 820,
         nullptr, nullptr, windowClass.hInstance, nullptr);
     if (window) {

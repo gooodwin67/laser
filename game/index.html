@@ -370,26 +370,54 @@ shoot(
 (event.clientY-canvasRectangle.top)/canvasRectangle.height
 );
 });
+// Browser Laser Lab communicates with the game across same-origin tabs.
+const gameChannel=new BroadcastChannel('laser-lab-shots-v1');
+let lastDetectorHeartbeat=0;
+let browserDetectorRunning=false;
+let nativeConnected=false;
+let latestSource='none';
+function refreshConnectionStatus(){
+ const browserOnline=browserDetectorRunning&&Date.now()-lastDetectorHeartbeat<4000;
+ if(browserOnline&&nativeConnected)
+ statusElement.textContent='Камера: браузерная Laser Lab и Windows Laser Core подключены';
+ else if(browserOnline)
+ statusElement.textContent='Камера: браузерная Laser Lab подключена';
+ else if(nativeConnected)
+ statusElement.textContent='Камера: Windows Laser Core подключён';
+ else statusElement.textContent='Камера: нет соединения · Открой Laser Lab в другой вкладке или играй мышью';
+}
+function receiveCameraShot(shot){
+ const shotX=Number(shot.x),shotY=Number(shot.y);
+ if(!Number.isFinite(shotX)||!Number.isFinite(shotY)||shotX<0||shotX>1||shotY<0||shotY>1)return;
+ showCameraEvent(shotX,shotY);
+ shoot(shotX,shotY);
+}
+gameChannel.onmessage=event=>{
+ const message=event.data;
+ if(!message||message.source!=='web')return;
+ if(message.type==='detector-status'){
+ browserDetectorRunning=Boolean(message.running);
+ lastDetectorHeartbeat=Date.now();
+ refreshConnectionStatus();
+ }else if(message.type==='shot'){
+ receiveCameraShot(message);
+ }
+};
+setInterval(refreshConnectionStatus,1000);
 let socket;
 function connect(){
 socket=new WebSocket('ws://127.0.0.1:8765');
-socket.onopen=()=>statusElement.textContent='Камера: Laser Core подключён · Мышь тоже работает';
+socket.onopen=()=>{nativeConnected=true;refreshConnectionStatus();};
 socket.onclose=()=>{
-statusElement.textContent='Камера: нет соединения · Играть можно мышью';
+nativeConnected=false;
+refreshConnectionStatus();
 setTimeout(connect,2500);
 };
-socket.onerror=()=>statusElement.textContent='Камера: соединение недоступно · Играй мышью';
+socket.onerror=()=>{nativeConnected=false;refreshConnectionStatus();};
 socket.onmessage=event=>{
 try{
 const shot=JSON.parse(event.data);
-if(shot.type==='shot'){
-const shotX=Number(shot.x);
-const shotY=Number(shot.y);
-if(Number.isFinite(shotX)&&Number.isFinite(shotY)&&shotX>=0&&shotX<=1&&shotY>=0&&shotY<=1){
-showCameraEvent(shotX,shotY);
-shoot(shotX,shotY);
-}
-}
+if(shot.type==='shot')receiveCameraShot(shot);
 }catch(error){console.warn('Invalid shot event',error);}
 };
 }

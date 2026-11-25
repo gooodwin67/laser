@@ -44,7 +44,7 @@ const defaults={width:640,height:480,frameRate:30,analysisWidth:320,brightness:1
 let config={...defaults};
 try{const stored=JSON.parse(localStorage.getItem(storageKey)||'{}');config={...defaults,...stored};}catch{}
 const readyPresets=[
-{name:'Красный фильтр (базовый)',brightness:141,redExcess:90,redChange:30,spotPixels:2,mode:'red',analysisWidth:320},
+{name:'Красный фильтр (проверенные значения)',brightness:141,redExcess:136,redChange:46,spotPixels:1,mode:'red',analysisWidth:320},
 {name:'Тёмная комната',brightness:205,redExcess:40,redChange:20,spotPixels:2,mode:'bright',analysisWidth:320},
 {name:'Чувствительный тест',brightness:135,redExcess:40,redChange:16,spotPixels:1,mode:'red',analysisWidth:640}
 ];

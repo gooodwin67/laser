@@ -4,6 +4,33 @@ This branch is **independent of the working GitHub Pages detector**.
 **Do not merge into main yet.** The existing `index.html` on main and the published
 `https://gooodwin67.github.io/laser/` remain unchanged.
 
+## Optics / Zoom experiments
+
+Both camera implementations have an **Optics / Zoom** panel.
+
+- **Digital zoom (1–6x)** crops the sensor image before detection and displays
+  the same cropped field in the preview. This does not add optical detail.
+- **Center X / Y** moves the crop across the sensor field. Zoom/crop changes
+  invalidate the four-point projection calibration and X/Y zeroing; recalibrate.
+- **Browser** reports the camera driver's supported ranges and actual settings
+  for zoom, pan, tilt, focus, exposure, exposure compensation, brightness,
+  contrast, saturation, sharpness, white balance/color temperature and gain.
+  Unsupported settings are marked as unavailable. Applying a control may be
+  rejected by the browser or driver.
+- **Native Windows** offers camera property experiments through OpenCV's
+  DirectShow backend: Zoom, Pan, Tilt, Gain, Brightness, Contrast, Saturation,
+  Sharpness, White balance temperature, Gamma, Hue, Backlight, Focus, Exposure.
+  These are experimental ranges, **not** verified hardware capability ranges.
+  Select a property, move its value slider, click Apply and inspect the driver
+  acceptance and readback. A driver may accept a setting but ignore it.
+- **Driver Zoom is not necessarily optical zoom.** Many webcams expose software
+  digital zoom, and some do not expose zoom at all.
+- The native program saves digital crop position and zoom to `laser-core.ini`;
+  the browser persists them in localStorage.
+
+For consistent coordinate mapping, keep the crop unchanged after calibrating.
+Uncaptured microsecond laser impulses cannot be recovered by zoom software.
+
 ## Two separate camera applications
 
 The old browser Laser Lab on `main` stays unchanged. This experimental branch

@@ -7,7 +7,13 @@
 :root{font:14px system-ui,Arial,sans-serif;color:#e8f2ff;color-scheme:dark}
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#05080e}
 #camera,#overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}#camera{background:#020409}#overlay{pointer-events:auto;cursor:crosshair}
-#camera.hidden{opacity:0}#mask{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;display:none;pointer-events:none;z-index:0}#overlay{z-index:1}
+#camera.hidden{opacity:0}
+#embeddedGame{position:fixed;inset:0;width:100%;height:100%;border:0;background:#081323;z-index:1;display:none}
+body.game-mode #embeddedGame{display:block}
+body.game-mode #camera{opacity:0}
+body.game-mode #mask,body.game-mode #overlay{display:none!important}
+body.game-mode #footer{opacity:0.75}
+#mask{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;display:none;pointer-events:none;z-index:0}#overlay{z-index:1}
 #toolbar{position:fixed;top:12px;left:12px;right:12px;display:flex;gap:7px;flex-wrap:wrap;z-index:2;pointer-events:none}
 button{font:inherit;background:#182a3bea;color:#effaff;border:1px solid #43617b;border-radius:9px;padding:9px 13px;cursor:pointer;pointer-events:auto}
 button:hover{background:#29445c}button.active{border-color:#50c9ff;background:#1a4d64}
@@ -24,17 +30,35 @@ input[type=range]{width:100%;accent-color:#3dbaff}select,input[type=text]{width:
 </head>
 <body>
 <video id="camera" autoplay playsinline muted></video><canvas id="overlay"></canvas><canvas id="mask"></canvas>
-<div id="toolbar"><button id="cameraButton">▶ Камера</button><button data-menu="presets">Пресеты</button><button data-menu="settings">Настройки</button><button data-menu="calibration">Калибровка</button><button data-menu="zeroing">Пристрелка</button><button id="showMask">Маска</button><button id="gameButton">🎮 Игра</button><span id="status">Камера выключена</span></div>
+<iframe id="embeddedGame" src="about:blank" title="Laser Arcade" allow="autoplay" loading="eager"></iframe>
+<div id="toolbar"><button id="cameraButton">▶ Камера</button><button data-menu="presets">Пресеты</button><button data-menu="settings">Настройки</button><button data-menu="calibration">Калибровка</button><button data-menu="zeroing">Пристрелка</button><button id="showMask">Маска</button><button id="viewButton">🎯 Стена / 🎮 Игра</button><span id="status">Камера выключена</span></div>
 <section id="panel" hidden><h2 id="panelTitle"></h2><div id="panelContent"></div></section>
 <div id="hint"></div><div id="footer">Кадры: — | Обработка: — | Выстрелов: 0</div>
 <script type="module">
-const gameUrl='https://gooodwin67.github.io/laser/game/';
+const gameUrl=new URL('../game/',location.href).href;
+const embeddedGame=document.getElementById('embeddedGame');
+const viewButton=document.getElementById('viewButton');
+let gameMode=false;
+function switchView(){
+gameMode=!gameMode;
+if(gameMode&&embeddedGame.src==='about:blank')embeddedGame.src=gameUrl;
+document.body.classList.toggle('game-mode',gameMode);
+viewButton.textContent=gameMode?'◀ Стена':'🎮 Игра';
+viewButton.classList.toggle('active',gameMode);
+if(gameMode){
+panel.hidden=true;
+activePanel='';
+calibrationStage=-1;
+clearHint();
+}
+}
+viewButton.onclick=switchView;
 const gameChannel=new BroadcastChannel('laser-lab-shots-v1');
 function announceDetector(){
 gameChannel.postMessage({type:'detector-status',running,source:'web',timestamp:Date.now()});
 }
 setInterval(announceDetector,1000);
-document.getElementById('gameButton').onclick=()=>window.open(gameUrl,'_blank','noopener,noreferrer');
+
 const video=document.getElementById('camera');
 const overlay=document.getElementById('overlay');
 const context=overlay.getContext('2d');

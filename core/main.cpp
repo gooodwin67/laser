@@ -40,18 +40,53 @@ std::mutex socketMutex;
 SOCKET clientSocket = INVALID_SOCKET;
 std::atomic<bool> running{true};
 HWND previewWindow = nullptr;
-HWND toolbarButtons[6]={};
+HWND toolbarButtons[7]={};
 HWND presetButtons[5]={};
 HWND calibrateButton=nullptr,clearCalibrationButton=nullptr;
 HWND zeroButton=nullptr,clearZeroButton=nullptr;
 HWND offsetXControl=nullptr,offsetYControl=nullptr,offsetXLabel=nullptr,offsetYLabel=nullptr;
 HWND settingsStatus=nullptr;
+HWND zoomLabels[3]={},zoomTracks[3]={};
+HWND hardwarePropertyLabel=nullptr,hardwarePropertyCombo=nullptr;
+HWND hardwareValueLabel=nullptr,hardwareValueTrack=nullptr,hardwareApplyButton=nullptr;
+HWND opticsStatus=nullptr;
+int digitalZoomTimes100=100,zoomCenterXTimes1000=500,zoomCenterYTimes1000=500;
+bool opticsChanged=false;
+struct HardwareProperty {
+    const char* name;
+    int cvProperty;
+    int minimum;
+    int maximum;
+    const char* description;
+};
+const HardwareProperty hardwareProperties[]={
+    {"Zoom (driver)",cv::CAP_PROP_ZOOM,0,500,"May be optical OR digital depending on hardware"},
+    {"Pan",cv::CAP_PROP_PAN,-180,180,"Driver controlled horizontal movement"},
+    {"Tilt",cv::CAP_PROP_TILT,-180,180,"Driver controlled vertical movement"},
+    {"Gain",cv::CAP_PROP_GAIN,0,255,"Sensor amplification, may add noise"},
+    {"Brightness",cv::CAP_PROP_BRIGHTNESS,0,255,"Camera brightness, not detector threshold"},
+    {"Contrast",cv::CAP_PROP_CONTRAST,0,255,"Driver image contrast"},
+    {"Saturation",cv::CAP_PROP_SATURATION,0,255,"Color saturation"},
+    {"Sharpness",cv::CAP_PROP_SHARPNESS,0,255,"Image sharpening may increase noise"},
+    {"White balance temp",cv::CAP_PROP_WB_TEMPERATURE,2000,9000,"Color temperature; driver must support it"},
+    {"Gamma",cv::CAP_PROP_GAMMA,0,500,"Tonal response"},
+    {"Hue",cv::CAP_PROP_HUE,-180,180,"Color hue"},
+    {"Backlight",cv::CAP_PROP_BACKLIGHT,0,10,"Backlight correction"},
+    {"Focus",cv::CAP_PROP_FOCUS,0,1023,"Lens focus; disable auto focus first"},
+    {"Exposure",cv::CAP_PROP_EXPOSURE,-13,0,"DSHOW exposure log2 values; disable auto exposure first"}
+};
+constexpr int hardwarePropertyCount=sizeof(hardwareProperties)/sizeof(hardwareProperties[0]);
+int requestedHardwareProperty=-1,requestedHardwareValue=0;
+bool hardwareApplyPending=false;
+std::string opticsFeedback="Select a driver property, then Apply. Unsupported properties may fail.";
+
 HWND resolutionCombo=nullptr,fpsCombo=nullptr,resolutionLabel=nullptr,fpsLabel=nullptr;
-enum PanelView { NoPanel, PresetPanel, SettingsPanel, CalibrationPanel, ZeroPanel };
-enum UiButton { CameraButtonId=2100, PresetButtonId, SettingsButtonId, CalibrationButtonId, ZeroButtonId, GameButtonId,
+enum PanelView { NoPanel, PresetPanel, SettingsPanel, CalibrationPanel, ZeroPanel, OpticsPanel };
+enum UiButton { CameraButtonId=2100, PresetButtonId, SettingsButtonId, CalibrationButtonId, ZeroButtonId, GameButtonId, OpticsButtonId,
 PresetOneId=2120,PresetTwoId,PresetThreeId,PresetSaveId,PresetLoadId,
 CalibrateId=2130,ClearCalibrationId,ZeroStartId,ZeroClearId,
-CameraResolutionId=2140,CameraFpsId,CameraModeApplyId };
+CameraResolutionId=2140,CameraFpsId,CameraModeApplyId,
+ZoomTrackId=2150,ZoomCenterXId,ZoomCenterYId,HardwareComboId,HardwareValueId,HardwareApplyId };
 PanelView activePanel=NoPanel;
 bool maskView=false;
 int calibrationStep=-1;
@@ -116,6 +151,14 @@ bool correctedPoint(const cv::Point2f& raw,cv::Point2f& corrected){
 void updateLayout(HWND window);
 void updatePanels();
 void updateZeroLabels();
+void updateOpticsLabels();
+void resetOpticsCalibration(){
+    cornerCount=0;
+    calibrationStep=-1;
+    zeroOffsetX=0;zeroOffsetY=0;
+    persistCalibration();
+}
+
 
 enum ControlId {
     BrightnessControl=2001, RedDifferenceControl, RedRiseControl, SpotAreaControl,
@@ -162,7 +205,7 @@ void layoutPreviewControls(HWND window){
     SetWindowPos(focusAutomaticCheckbox,nullptr,sideLeft+12,560,160,22,SWP_NOZORDER);
     SetWindowPos(exposureAutomaticCheckbox,nullptr,sideLeft+182,560,170,22,SWP_NOZORDER);
     SetWindowPos(cameraStatusLabel,nullptr,sideLeft+12,594,340,70,SWP_NOZORDER);
-    for(int index=0;index<6;index++)
+    for(int index=0;index<7;index++)
         SetWindowPos(toolbarButtons[index],nullptr,12+index*128,7,122,34,SWP_NOZORDER);
     for(int index=0;index<5;index++){
         ShowWindow(presetButtons[index],activePanel==PresetPanel?SW_SHOW:SW_HIDE);
@@ -246,8 +289,8 @@ void createPreviewControls(HWND window) {
         WS_CHILD|WS_VISIBLE,0,0,400,22,window,nullptr,GetModuleHandleA(nullptr),nullptr);
     SendMessageA(focusAutomaticCheckbox,BM_SETCHECK,BST_CHECKED,0);
     SendMessageA(exposureAutomaticCheckbox,BM_SETCHECK,BST_CHECKED,0);
-    const char* buttonLabels[]={"Camera / Mask","Presets","Settings","Calibration","Zeroing","Game"};
-    for(int index=0;index<6;index++)
+    const char* buttonLabels[]={"Camera / Mask","Presets","Settings","Calibration","Zeroing","Game","Optics / Zoom"};
+    for(int index=0;index<7;index++)
         toolbarButtons[index]=CreateWindowExA(0,"BUTTON",buttonLabels[index],WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
         0,0,100,34,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(CameraButtonId+index)),
         GetModuleHandleA(nullptr),nullptr);
@@ -348,6 +391,7 @@ LRESULT CALLBACK previewWindowProcedure(HWND window, UINT message, WPARAM wordPa
         else if(clicked==SettingsButtonId)activePanel=activePanel==SettingsPanel?NoPanel:SettingsPanel;
         else if(clicked==CalibrationButtonId)activePanel=activePanel==CalibrationPanel?NoPanel:CalibrationPanel;
         else if(clicked==ZeroButtonId)activePanel=activePanel==ZeroPanel?NoPanel:ZeroPanel;
+        else if(clicked==OpticsButtonId)activePanel=activePanel==OpticsPanel?NoPanel:OpticsPanel;
         else if(clicked==GameButtonId){
             ShellExecuteA(window,"open","https://gooodwin67.github.io/laser/game/",
                           nullptr,nullptr,SW_SHOWNORMAL);
@@ -362,6 +406,21 @@ LRESULT CALLBACK previewWindowProcedure(HWND window, UINT message, WPARAM wordPa
             updateZeroLabels();
         }
         else if(clicked>=PresetOneId&&clicked<=PresetLoadId)uiAction=clicked;
+        else if(clicked==HardwareComboId&&HIWORD(wordParameter)==CBN_SELCHANGE){
+            const int index=static_cast<int>(SendMessageA(hardwarePropertyCombo,CB_GETCURSEL,0,0));
+            if(index>=0&&index<hardwarePropertyCount){
+                const HardwareProperty& property=hardwareProperties[index];
+                SendMessageA(hardwareValueTrack,TBM_SETRANGEMIN,FALSE,property.minimum);
+                SendMessageA(hardwareValueTrack,TBM_SETRANGEMAX,TRUE,property.maximum);
+                SendMessageA(hardwareValueTrack,TBM_SETPOS,TRUE,property.minimum);
+                updateOpticsLabels();
+            }
+        }
+        else if(clicked==HardwareApplyId){
+            requestedHardwareProperty=static_cast<int>(SendMessageA(hardwarePropertyCombo,CB_GETCURSEL,0,0));
+            requestedHardwareValue=static_cast<int>(SendMessageA(hardwareValueTrack,TBM_GETPOS,0,0));
+            hardwareApplyPending=true;
+        }
         else if((clicked==CameraResolutionId||clicked==CameraFpsId)&&HIWORD(wordParameter)==CBN_SELCHANGE)
             uiAction=CameraModeApplyId;
         updatePanels();
@@ -373,6 +432,22 @@ LRESULT CALLBACK previewWindowProcedure(HWND window, UINT message, WPARAM wordPa
         return 0;
     }
     if(message==WM_HSCROLL){
+        const HWND changedControl=reinterpret_cast<HWND>(longParameter);
+        if(changedControl==zoomTracks[0]||changedControl==zoomTracks[1]||changedControl==zoomTracks[2]){
+            const int zoomValue=static_cast<int>(SendMessageA(zoomTracks[0],TBM_GETPOS,0,0));
+            const int centerX=static_cast<int>(SendMessageA(zoomTracks[1],TBM_GETPOS,0,0));
+            const int centerY=static_cast<int>(SendMessageA(zoomTracks[2],TBM_GETPOS,0,0));
+            if(zoomValue!=digitalZoomTimes100||centerX!=zoomCenterXTimes1000||centerY!=zoomCenterYTimes1000){
+                digitalZoomTimes100=zoomValue;zoomCenterXTimes1000=centerX;zoomCenterYTimes1000=centerY;
+                saveInt("optics","zoom",digitalZoomTimes100);
+                saveInt("optics","centerX",zoomCenterXTimes1000);
+                saveInt("optics","centerY",zoomCenterYTimes1000);
+                resetOpticsCalibration();
+                opticsChanged=true;
+            }
+            updateOpticsLabels();
+        }
+        if(changedControl==hardwareValueTrack)updateOpticsLabels();
         if(reinterpret_cast<HWND>(longParameter)==offsetXControl ||
            reinterpret_cast<HWND>(longParameter)==offsetYControl){
             zeroOffsetX=static_cast<double>(SendMessageA(offsetXControl,TBM_GETPOS,0,0))/1000;

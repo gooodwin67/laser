@@ -28,6 +28,7 @@ input[type=range]{width:100%;accent-color:#3dbaff}select,input[type=text]{width:
 #hint.visible{display:block}
 #gameChoice{position:fixed;top:60px;left:12px;width:min(310px,calc(100vw - 24px));z-index:5;
 background:#0c1d2df6;border:1px solid #437c9b;padding:12px;border-radius:11px;box-shadow:0 14px 42px #0009}
+#gameChoice{max-height:calc(100dvh - 72px);overflow-y:auto;overscroll-behavior:contain}
 #gameChoice[hidden]{display:none}
 #gameChoice button{display:block;width:100%;text-align:left;margin:6px 0;padding:11px}
 #gameChoice p{margin:4px 0 10px}
@@ -45,6 +46,11 @@ background:#0c1d2df6;border:1px solid #437c9b;padding:12px;border-radius:11px;bo
 <button data-game="biathlon">🏅 Биатлон — 5 мишеней, 5 выстрелов</button>
 <button data-game="popups">⚡ Быстрые мишени — в случайных местах</button>
 <button data-game="ducks">🦆 Утиная заводь — озеро и летящие утки</button>
+<button data-game="cans">🥫 Жестянки на весу — удерживай банки</button>
+<button data-game="docks">⚓ Ночной порт — сигнальные диски</button>
+<button data-game="quarry">🟠 Эхо карьера — летящие тарелки</button>
+<button data-game="western">⭐ Картонная засада — силуэты</button>
+<button data-game="frost">❄ Полярная станция — порядок вспышек</button>
 </section>
 <section id="panel" hidden><h2 id="panelTitle"></h2><div id="panelContent"></div></section>
 <div id="hint"></div><div id="footer">Кадры: — | Обработка: — | Выстрелов: 0</div>
@@ -53,6 +59,8 @@ const gameUrl=new URL('../game/',location.href);
 const embeddedGame=document.getElementById('embeddedGame');
 const viewButton=document.getElementById('viewButton');
 const gameChoice=document.getElementById('gameChoice');
+const gameButtons=Array.from(gameChoice.querySelectorAll('button[data-game]'));
+const gameModes=new Set(gameButtons.map(button=>button.dataset.game));
 let gameMode=false;
 function stopGame(){
 gameMode=false;
@@ -65,7 +73,7 @@ gameChoice.hidden=true;
 embeddedGame.src='about:blank';
 }
 function launchGame(selectedMode){
-if(!['arcade','biathlon','popups','ducks'].includes(selectedMode))return;
+if(!gameModes.has(selectedMode))return;
 gameChoice.hidden=true;
 panel.hidden=true;
 activePanel='';
@@ -81,7 +89,7 @@ viewButton.onclick=()=>{
 if(gameMode){stopGame();return;}
 gameChoice.hidden=!gameChoice.hidden;
 };
-gameChoice.querySelectorAll('[data-game]').forEach(button=>{
+gameButtons.forEach(button=>{
 button.onclick=()=>launchGame(button.dataset.game);
 });
 window.addEventListener('message',event=>{

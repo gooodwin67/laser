@@ -32,6 +32,19 @@ background:#0c1d2df6;border:1px solid #437c9b;padding:12px;border-radius:11px;bo
 #gameChoice[hidden]{display:none}
 #gameChoice button{display:block;width:100%;text-align:left;margin:6px 0;padding:11px}
 #gameChoice p{margin:4px 0 10px}
+#laserCalibrationScreen{display:none;position:fixed;inset:0;z-index:20;background:#02050a;color:#ecf7ff;overflow:hidden;font:16px system-ui,Arial,sans-serif}
+body.laser-calibration #laserCalibrationScreen{display:block}
+body.laser-calibration #camera{opacity:0!important}
+body.laser-calibration #mask,body.laser-calibration #overlay,body.laser-calibration #toolbar,body.laser-calibration #footer,body.laser-calibration #hint{display:none!important}
+#laserCalibrationInstructions{position:absolute;top:3%;left:50%;transform:translateX(-50%);width:min(90vw,850px);text-align:center;line-height:1.55;pointer-events:none}
+#laserCalibrationInstructions strong{display:block;font-size:clamp(18px,2.2vw,27px);margin-bottom:5px}
+#laserCalibrationInstructions small{display:block;color:#9eb8c9;font-size:clamp(12px,1.3vw,16px)}
+#laserCalibrationMarker{position:absolute;width:60px;height:60px;transform:translate(-50%,-50%);border:4px solid #65edff;border-radius:50%;box-shadow:0 0 0 8px #65edff20,0 0 30px #65edff50;pointer-events:none}
+#laserCalibrationMarker:before,#laserCalibrationMarker:after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#d5fbff}
+#laserCalibrationMarker:before{width:3px;height:78px}
+#laserCalibrationMarker:after{width:78px;height:3px}
+#laserCalibrationCancel{position:absolute;right:18px;bottom:18px;font-size:16px;padding:12px 20px;z-index:21}
+
 
 </style>
 </head>
@@ -53,6 +66,12 @@ background:#0c1d2df6;border:1px solid #437c9b;padding:12px;border-radius:11px;bo
 <button data-game="frost">❄ Полярная станция — порядок вспышек</button>
 </section>
 <section id="panel" hidden><h2 id="panelTitle"></h2><div id="panelContent"></div></section>
+<div id="laserCalibrationScreen">
+<div id="laserCalibrationInstructions"><strong id="laserCalibrationTitle">Калибровка лазером · 1/4</strong>
+<small>Выстрели лазером в центр маркера. Четыре маркера — четыре выстрела.</small></div>
+<div id="laserCalibrationMarker"></div>
+<button id="laserCalibrationCancel" type="button">✕ Отмена · Esc</button>
+</div>
 <div id="hint"></div><div id="footer">Кадры: — | Обработка: — | Выстрелов: 0</div>
 <script type="module">
 const gameUrl=new URL('../game/',location.href);
@@ -126,6 +145,11 @@ let cameraStream=null,cameraTrack=null,previousRed=null;
 let running=false,runToken=0,frameCounter=0,processedCounter=0,shots=0;
 let framesStart=performance.now(),processedStart=performance.now(),cameraFps=0,processedFps=0;
 let lastShotTime=-Infinity,lastShot=null,activePanel='',calibrationStage=-1,zeroingStage=0,showMask=config.mask;
+const laserCalibrationDestinations=[
+{x:0.08,y:0.12},{x:0.92,y:0.12},{x:0.92,y:0.88},{x:0.08,y:0.88}
+];
+let laserCalibrationStage=-1;
+let laserCalibrationPoints=[];
 let lastFrameMediaTime=-1;
 let soundContext=null;
 let shotNoiseBuffer=null;
@@ -235,9 +259,10 @@ for(let column=pivot;column<=order;column++)rows[row][column]-=multiple*rows[piv
 }
 return rows.map(row=>row[order]);
 }
-function homography(corners){
-if(corners.length!==4)return null;
-const destination=[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}];
+function homography(corners,destination=config.calibrationDestinations||[
+{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}
+]){
+if(corners.length!==4||destination.length!==4)return null;
 const matrix=[],vector=[];
 for(let index=0;index<4;index++){
 const {x,y}=corners[index];
@@ -255,6 +280,53 @@ if(Math.abs(denominator)<1e-8)return null;
 return {x:(transform[0]*raw.x+transform[1]*raw.y+transform[2])/denominator+config.offsetX,
 y:(transform[3]*raw.x+transform[4]*raw.y+transform[5])/denominator+config.offsetY};
 }
+function updateLaserCalibrationMarker(){
+if(laserCalibrationStage<0)return;
+const destination=laserCalibrationDestinations[laserCalibrationStage];
+const labels=['верхний левый','верхний правый','нижний правый','нижний левый'];
+document.getElementById('laserCalibrationMarker').style.left=(destination.x*100)+'%';
+document.getElementById('laserCalibrationMarker').style.top=(destination.y*100)+'%';
+document.getElementById('laserCalibrationTitle').textContent=
+'Калибровка лазером · '+(laserCalibrationStage+1)+'/4 · '+labels[laserCalibrationStage];
+}
+function finishLaserCalibration(message){
+laserCalibrationStage=-1;
+laserCalibrationPoints=[];
+document.body.classList.remove('laser-calibration');
+if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
+activePanel='';
+openPanel('calibration');
+statusElement.textContent=message;
+}
+function startLaserCalibration(){
+if(!running){
+statusElement.textContent='Сначала включи камеру';
+return;
+}
+laserCalibrationPoints=[];
+laserCalibrationStage=0;
+calibrationStage=-1;
+panel.hidden=true;
+clearHint();
+document.body.classList.add('laser-calibration');
+updateLaserCalibrationMarker();
+if(!document.documentElement.requestFullscreen){
+finishLaserCalibration('Полноэкранный режим не поддерживается браузером');
+return;
+}
+document.documentElement.requestFullscreen().catch(error=>{
+if(laserCalibrationStage>=0)finishLaserCalibration('Не удалось перейти в полный экран: '+error.message);
+});
+}
+document.getElementById('laserCalibrationCancel').onclick=()=>
+finishLaserCalibration('Калибровка отменена');
+document.addEventListener('keydown',event=>{
+if(event.key==='Escape'&&laserCalibrationStage>=0)finishLaserCalibration('Калибровка отменена');
+});
+document.addEventListener('fullscreenchange',()=>{
+if(!document.fullscreenElement&&laserCalibrationStage>=0)
+finishLaserCalibration('Полноэкранная калибровка отменена');
+});
 function renderOverlay(){
 const viewport=geometry();
 context.clearRect(0,0,viewport.width,viewport.height);
@@ -334,6 +406,20 @@ if(best&&timestamp-lastShotTime>=config.debounce){
 lastShotTime=timestamp;shots++;
 playShotSound();
 const raw={x:(best.x+0.5)/processingWidth,y:(best.y+0.5)/processingHeight};
+if(laserCalibrationStage>=0){
+laserCalibrationPoints.push(raw);
+laserCalibrationStage++;
+if(laserCalibrationStage===4){
+if(homography(laserCalibrationPoints,laserCalibrationDestinations)){
+config.corners=laserCalibrationPoints.map(point=>({...point}));
+config.calibrationDestinations=laserCalibrationDestinations.map(point=>({...point}));
+config.offsetX=0;config.offsetY=0;
+save();
+finishLaserCalibration('Калибровка лазером сохранена: 4 точки');
+}else finishLaserCalibration('Не удалось рассчитать перспективу. Повтори 4 выстрела.');
+}else updateLaserCalibrationMarker();
+return;
+}
 const mapped=mapPoint(raw);
 lastShot={raw,mapped,time:performance.now(),accepted:true};
 if(mapped&&Number.isFinite(mapped.x)&&Number.isFinite(mapped.y)){
@@ -470,9 +556,14 @@ const preset=[...readyPresets,...config.presets][Number(button.dataset.preset)];
 const {name,...settings}=preset;Object.assign(config,settings);save();openPanel('settings');
 });
 }else if(name==='calibration'){
-panelContent.innerHTML='<p>Камера должна видеть всю проекцию. Нажми «Указать 4 угла», затем щёлкни по углам экрана на изображении камеры: верхний левый → верхний правый → нижний правый → нижний левый. Вычислим перспективное преобразование.</p><div class="inline"><button id="calibrate">Указать 4 угла</button><button id="clearCalibration">Сбросить</button></div><p id="calibrationStatus">'+(config.corners.length===4?'Калибровка сохранена.':'Не откалибровано')+'</p>';
-document.getElementById('calibrate').onclick=()=>{config.corners=[];calibrationStage=0;displayHint('Укажи мышью верхний левый угол проекции (1/4)');panel.hidden=true;};
-document.getElementById('clearCalibration').onclick=()=>{config.corners=[];calibrationStage=-1;save();openPanel('settings');openPanel('calibration');};
+panelContent.innerHTML='<p>Для проектора: нажми «Калибровка лазером», программа откроет чистый полноэкранный экран с четырьмя маркерами. Стреляй по ним по одному. Координаты камеры автоматически сопоставятся с координатами проектора.</p>'+
+'<div class="inline"><button id="calibrateLaser">🎯 Калибровка лазером (4 выстрела)</button></div>'+
+'<p>Запасной способ: отмечай углы видимой проекции мышью на изображении камеры.</p>'+
+'<div class="inline"><button id="calibrate">Указать 4 угла мышью</button><button id="clearCalibration">Сбросить</button></div>'+
+'<p id="calibrationStatus">'+(config.corners.length===4?'Калибровка сохранена.':'Не откалибровано')+'</p>';
+document.getElementById('calibrateLaser').onclick=startLaserCalibration;
+document.getElementById('calibrate').onclick=()=>{config.corners=[];config.calibrationDestinations=null;calibrationStage=0;displayHint('Укажи мышью верхний левый угол проекции (1/4)');panel.hidden=true;};
+document.getElementById('clearCalibration').onclick=()=>{config.corners=[];config.calibrationDestinations=null;calibrationStage=-1;save();openPanel('settings');openPanel('calibration');};
 }else if(name==='zeroing'){
 panelContent.innerHTML='<p>После калибровки стреляй по контрольной точке сколько нужно. При каждом обнаружении сохраняется последний выстрел. Когда получишь подходящий — щёлкни мышью по точке прицеливания. Офсет рассчитывается по последнему выстрелу.</p><div class="inline"><button id="startZeroing">Пристрелять</button><button id="resetZeroing">Сбросить офсет</button></div><p>Офсет X: '+config.offsetX.toFixed(4)+' | Y: '+config.offsetY.toFixed(4)+'</p>'+
 setting('Офсет X','offsetX',-0.5,0.5,0.001,'Поправка по горизонтали в долях ширины игрового экрана.')+

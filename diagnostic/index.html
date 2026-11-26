@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Laser Lab — диагностика задержки 2D</title>
+<style>
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:#060b12;color:#e8f4ff;font:14px system-ui,Arial,sans-serif;overflow:hidden}
+canvas{display:block;width:100vw;height:100dvh;touch-action:none;cursor:crosshair}
+body.hide-cursor canvas{cursor:none}
+#controls{position:fixed;top:12px;left:12px;max-width:min(550px,calc(100vw - 24px));padding:14px 16px;background:#0b1c2beF;border:1px solid #416884;border-radius:12px;z-index:2;line-height:1.55;pointer-events:auto}
+h1{font-size:17px;margin:0 0 6px}
+p{margin:5px 0;color:#bdd2e2}
+strong{color:#92edff}
+button,a{display:inline-block;background:#18384c;border:1px solid #537d98;color:white;border-radius:7px;padding:7px 10px;margin:7px 5px 0 0;text-decoration:none;cursor:pointer}
+label{display:inline-block;margin-top:8px;cursor:pointer}
+#stats{white-space:pre-line;font:12px/1.6 monospace;color:#c5ebff;margin-top:8px}
+#note{font-size:12px;color:#8fb0c4}
+</style>
+</head>
+<body>
+<canvas id="surface"></canvas>
+<section id="controls">
+<h1>2D-тест задержки · без Three.js</h1>
+<p>Води мышь по полю и кликай на ходу. <strong>Красные кресты</strong> — координаты событий нажатия, <strong>голубой прицел</strong> — последний полученный ввод мыши, нарисованный Canvas.</p>
+<div><button id="clear" type="button">Очистить следы</button><button id="fullscreen" type="button">Во весь экран</button><a href="../web-detector/">Вернуться в Laser Lab</a></div>
+<label><input id="showSystemCursor" type="checkbox" checked> Показывать системный курсор (сравнить с голубым)</label>
+<div id="stats">Сбор статистики…</div>
+<p id="note">Задержка до Canvas — время от события до вызова отрисовки, не полная задержка матрицы монитора. Точность неподвижного клика и движущегося клика сравниваются отдельно.</p>
+</section>
+<script>
+const surface=document.getElementById('surface');
+const context=surface.getContext('2d',{alpha:false});
+const stats=document.getElementById('stats');
+const showSystemCursor=document.getElementById('showSystemCursor');
+const clicks=[];
+let pointerPosition=null;
+let latestPointerEventAt=0;
+let clickToRenderMs=0;
+let moveToRenderMs=0;
+let frameCount=0;
+let fps=0;
+let lastStatsAt=performance.now();
+let lastFrameAt=performance.now();
+let maxFrameMs=0;
+let width=0;
+let height=0;
+function resize(){
+width=innerWidth;height=innerHeight;
+const pixelRatio=Math.min(devicePixelRatio||1,2);
+surface.width=Math.max(1,Math.round(width*pixelRatio));
+surface.height=Math.max(1,Math.round(height*pixelRatio));
+context.setTransform(pixelRatio,0,0,pixelRatio,0,0);
+}
+function getPosition(event){
+const rectangle=surface.getBoundingClientRect();
+return {x:event.clientX-rectangle.left,y:event.clientY-rectangle.top};
+}
+surface.addEventListener('pointermove',event=>{
+pointerPosition=getPosition(event);
+latestPointerEventAt=performance.now();
+});
+surface.addEventListener('pointerdown',event=>{
+const position=getPosition(event);
+pointerPosition=position;
+latestPointerEventAt=performance.now();
+clicks.push({x:position.x,y:position.y,at:latestPointerEventAt,rendered:false});
+if(clicks.length>100)clicks.shift();
+});
+surface.addEventListener('pointerleave',()=>{pointerPosition=null;});
+showSystemCursor.addEventListener('change',()=>{
+document.body.classList.toggle('hide-cursor',!showSystemCursor.checked);
+});
+document.getElementById('clear').onclick=()=>{clicks.length=0;clickToRenderMs=0;};
+document.getElementById('fullscreen').onclick=()=>{
+if(document.fullscreenElement)document.exitFullscreen();
+else document.documentElement.requestFullscreen().catch(()=>{});
+};
+function drawCross(x,y,size,color){
+context.strokeStyle=color;
+context.lineWidth=2;
+context.beginPath();
+context.moveTo(x-size,y);context.lineTo(x+size,y);
+context.moveTo(x,y-size);context.lineTo(x,y+size);
+context.stroke();
+}
+function render(now){
+requestAnimationFrame(render);
+const frameTime=now-lastFrameAt;
+lastFrameAt=now;
+if(frameTime>maxFrameMs&&frameTime<1000)maxFrameMs=frameTime;
+frameCount++;
+context.fillStyle='#07111d';
+context.fillRect(0,0,width,height);
+context.strokeStyle='#142a3a';
+context.lineWidth=1;
+context.beginPath();
+for(let x=0;x<width;x+=80){context.moveTo(x,0);context.lineTo(x,height);}
+for(let y=0;y<height;y+=80){context.moveTo(0,y);context.lineTo(width,y);}
+context.stroke();
+for(const click of clicks){
+drawCross(click.x,click.y,12,'#ff5775');
+if(!click.rendered){click.rendered=true;clickToRenderMs=now-click.at;}
+}
+if(pointerPosition){
+context.beginPath();
+context.strokeStyle='#67e8ff';context.lineWidth=2;
+context.arc(pointerPosition.x,pointerPosition.y,19,0,Math.PI*2);
+context.stroke();
+drawCross(pointerPosition.x,pointerPosition.y,7,'#67e8ff');
+moveToRenderMs=Math.max(0,now-latestPointerEventAt);
+}
+if(now-lastStatsAt>=1000){
+fps=1000*frameCount/(now-lastStatsAt);
+stats.textContent='Canvas FPS: '+fps.toFixed(1)+' | Макс. кадр: '+maxFrameMs.toFixed(1)+' мс'+
+'\nСобытие мыши → кадр Canvas: '+moveToRenderMs.toFixed(1)+' мс'+
+' | Последний клик → кадр: '+clickToRenderMs.toFixed(1)+' мс'+
+' | Кликов: '+clicks.length;
+frameCount=0;maxFrameMs=0;lastStatsAt=now;
+}
+}
+addEventListener('resize',resize);
+resize();
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
